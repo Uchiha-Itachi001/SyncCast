@@ -578,6 +578,7 @@ export function useSyncCast() {
     testPingActive,
     hostMigrationNotice,
     error,
+    setError,
     unlockAudio,
     createRoom,
     joinRoom,

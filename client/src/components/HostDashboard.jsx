@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   Play,
@@ -19,11 +19,14 @@ import {
   ShieldCheck,
   Sparkles,
   Volume2,
-  ArrowLeft
+  ArrowLeft,
+  Key,
+  HelpCircle
 } from 'lucide-react';
 import { SpatialStage } from './SpatialStage.jsx';
 import { ChannelStrip } from './ChannelStrip.jsx';
 import { PlaylistQueue } from './PlaylistQueue.jsx';
+import { apiService } from '../services/apiService.js';
 
 function YoutubeIcon({ size = 20, color = 'currentColor' }) {
   return (
@@ -78,6 +81,47 @@ export function HostDashboard({
   const [isReplacing, setIsReplacing] = useState(false);
   const [isSeeking, setIsSeeking] = useState(false);
   const [localSeekPos, setLocalSeekPos] = useState(0);
+
+  // Cloud YouTube Authentication (Render / Datacenter cookies)
+  const [cookieStatus, setCookieStatus] = useState(null);
+  const [showCookieDrawer, setShowCookieDrawer] = useState(false);
+  const [cookieInput, setCookieInput] = useState('');
+  const [savingCookies, setSavingCookies] = useState(false);
+  const [cookieFeedback, setCookieFeedback] = useState(null);
+
+  useEffect(() => {
+    apiService.getCookieStatus()
+      .then((st) => setCookieStatus(st))
+      .catch(() => {});
+  }, []);
+
+  const handleSaveCookies = async () => {
+    if (!cookieInput.trim()) return;
+    setSavingCookies(true);
+    setCookieFeedback(null);
+    try {
+      await apiService.uploadCookies(cookieInput.trim());
+      setCookieStatus({ configured: true, source: 'file' });
+      setCookieFeedback({ type: 'success', text: 'Cookies saved to server! YouTube cloud extraction ready.' });
+      setCookieInput('');
+      setTimeout(() => setShowCookieDrawer(false), 2000);
+    } catch (err) {
+      setCookieFeedback({ type: 'error', text: err.message });
+    } finally {
+      setSavingCookies(false);
+    }
+  };
+
+  const handleCookieFile = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setCookieInput(event.target?.result || '');
+      };
+      reader.readAsText(file);
+    }
+  };
 
   const joinUrl = `${window.location.origin}?room=${room.code}`;
 
@@ -688,6 +732,105 @@ export function HostDashboard({
                   </div>
                   <div style={{ fontSize: '0.68rem', fontFamily: 'var(--font-mono)', color: 'var(--text-dim)' }}>
                     EXAMPLE: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+                  </div>
+
+                  {/* Cloud/Render Cookie Configuration Strip */}
+                  <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.7rem' }}>
+                        <div className={`led-diode ${cookieStatus?.configured ? 'led-emerald' : 'led-amber'}`} />
+                        <span style={{ color: cookieStatus?.configured ? '#10b981' : 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                          {cookieStatus?.configured ? 'CLOUD AUTH ACTIVE (COOKIES LOADED)' : 'CLOUD RENDER AUTH: COOKIES NOT LOADED'}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button
+                          type="button"
+                          onClick={() => setShowCookieDrawer(!showCookieDrawer)}
+                          className="btn-hardware-secondary"
+                          style={{ fontSize: '0.68rem', padding: '4px 8px' }}
+                        >
+                          <Key size={12} /> {showCookieDrawer ? 'HIDE CLOUD AUTH' : 'SETUP CLOUD COOKIES'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setActiveInputTab('upload')}
+                          className="btn-hardware-secondary"
+                          style={{ fontSize: '0.68rem', padding: '4px 8px', color: '#38bdf8' }}
+                        >
+                          <Upload size={12} /> UPLOAD FILE INSTEAD
+                        </button>
+                      </div>
+                    </div>
+
+                    {showCookieDrawer && (
+                      <div
+                        className="chassis-recessed"
+                        style={{
+                          marginTop: '12px',
+                          padding: '12px',
+                          textAlign: 'left',
+                          fontSize: '0.72rem'
+                        }}
+                      >
+                        <div style={{ fontWeight: 700, color: 'var(--text-main)', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <HelpCircle size={14} color="#f59e0b" />
+                          HOW TO RUN YOUTUBE ON RENDER / CLOUD HOSTS:
+                        </div>
+                        <p style={{ color: 'var(--text-dim)', margin: '0 0 10px', lineHeight: 1.4 }}>
+                          YouTube blocks datacenter IPs (like Render) unless you provide session cookies.
+                          Export your YouTube cookies using the browser extension <strong>&quot;Get cookies.txt LOCALLY&quot;</strong>, then paste or upload below.
+                        </p>
+
+                        <div style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
+                          <label
+                            className="btn-hardware-secondary"
+                            style={{ fontSize: '0.68rem', padding: '4px 10px', cursor: 'pointer' }}
+                          >
+                            UPLOAD COOKIES.TXT
+                            <input type="file" accept=".txt" onChange={handleCookieFile} style={{ display: 'none' }} />
+                          </label>
+                          <span style={{ color: 'var(--text-dim)', fontSize: '0.65rem' }}>OR PASTE NETSCAPE COOKIES BELOW:</span>
+                        </div>
+
+                        <textarea
+                          rows={3}
+                          className="terminal-input"
+                          value={cookieInput}
+                          onChange={(e) => setCookieInput(e.target.value)}
+                          placeholder="# Netscape HTTP Cookie File&#10;.youtube.com TRUE / FALSE 1791685065 SID ..."
+                          style={{ width: '100%', padding: '6px 8px', fontSize: '0.7rem', fontFamily: 'var(--font-mono)', marginBottom: '8px' }}
+                        />
+
+                        {cookieFeedback && (
+                          <div
+                            style={{
+                              padding: '6px 10px',
+                              borderRadius: '4px',
+                              marginBottom: '8px',
+                              fontSize: '0.7rem',
+                              fontFamily: 'var(--font-mono)',
+                              background: cookieFeedback.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                              color: cookieFeedback.type === 'success' ? '#10b981' : '#f87171'
+                            }}
+                          >
+                            {cookieFeedback.text}
+                          </div>
+                        )}
+
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                          <button
+                            type="button"
+                            disabled={!cookieInput.trim() || savingCookies}
+                            onClick={handleSaveCookies}
+                            className="btn-hardware-primary"
+                            style={{ fontSize: '0.68rem', padding: '6px 14px' }}
+                          >
+                            {savingCookies ? 'SAVING...' : 'SAVE COOKIES TO CLOUD SERVER'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </form>
               )}

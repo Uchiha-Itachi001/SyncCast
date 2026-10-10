@@ -29,6 +29,7 @@ export default function App() {
     testPingActive,
     hostMigrationNotice,
     error,
+    setError,
     unlockAudio,
     createRoom,
     joinRoom,
@@ -88,11 +89,23 @@ export default function App() {
             borderRadius: '6px',
             display: 'flex',
             alignItems: 'center',
-            gap: '10px'
+            justifyContent: 'space-between',
+            gap: '10px',
+            flexWrap: 'wrap'
           }}
         >
-          <div className="led-diode led-rose" />
-          <span>[AUDIO ENGINE ERROR] {error}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: '240px' }}>
+            <div className="led-diode led-rose" />
+            <span>[AUDIO ENGINE ERROR] {error}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            className="btn-hardware-secondary"
+            style={{ fontSize: '0.65rem', padding: '3px 8px', color: '#fda4af', borderColor: '#f43f5e' }}
+          >
+            DISMISS
+          </button>
         </div>
       )}
 

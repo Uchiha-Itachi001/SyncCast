@@ -2,8 +2,13 @@ import express from 'express';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
+import { fileURLToPath } from 'url';
 import { spawn, execFile } from 'child_process';
 import util from 'util';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 import { CONFIG } from '../config/constants.js';
 import {
   isPrivateOrBlockedHost,
@@ -496,6 +501,42 @@ router.get('/proxy', proxyLimiter, async (req, res) => {
         error: isTimeout ? 'Remote stream fetch timed out (20s)' : `Proxy fetch failed: ${err.message}`
       });
     }
+  }
+});
+
+// Check if YouTube cookies are configured
+router.get('/cookies/status', (req, res) => {
+  const localCookies = path.resolve(process.cwd(), 'cookies.txt');
+  const serverCookies = path.resolve(__dirname, '..', '..', 'cookies.txt');
+  const tmpCookies = path.resolve(os.tmpdir(), 'synccast_yt_cookies.txt');
+  const renderSecret = '/etc/secrets/cookies.txt';
+
+  const hasEnv = !!(process.env.YOUTUBE_COOKIES && process.env.YOUTUBE_COOKIES.trim());
+  const hasFile = fs.existsSync(localCookies) || fs.existsSync(serverCookies) || fs.existsSync(tmpCookies) || fs.existsSync(renderSecret);
+
+  res.json({
+    configured: hasEnv || hasFile,
+    source: hasEnv ? 'env' : hasFile ? 'file' : 'none'
+  });
+});
+
+// Upload or save cookies text directly from web client
+router.post('/cookies', express.json({ limit: '1mb' }), (req, res) => {
+  const { cookiesContent } = req.body;
+  if (!cookiesContent || typeof cookiesContent !== 'string' || !cookiesContent.trim()) {
+    return res.status(400).json({ error: 'Missing cookie content' });
+  }
+
+  try {
+    const savePath = path.resolve(process.cwd(), 'cookies.txt');
+    const tmpPath = path.resolve(os.tmpdir(), 'synccast_yt_cookies.txt');
+    fs.writeFileSync(savePath, cookiesContent.trim(), 'utf8');
+    fs.writeFileSync(tmpPath, cookiesContent.trim(), 'utf8');
+    console.log('[SyncCast] YouTube authentication cookies saved to disk successfully');
+    res.json({ success: true, message: 'YouTube authentication cookies saved successfully' });
+  } catch (err) {
+    console.error('[SyncCast] Failed to save cookies:', err.message);
+    res.status(500).json({ error: `Failed to save cookies: ${err.message}` });
   }
 });
 

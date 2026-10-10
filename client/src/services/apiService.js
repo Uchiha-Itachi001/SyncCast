@@ -133,6 +133,28 @@ export const apiService = {
       mimeType: 'audio/mpeg',
       isStream: true
     };
+  },
+
+  async getCookieStatus() {
+    try {
+      const res = await fetch(`${SERVER_URL}/api/audio/cookies/status`);
+      return res.ok ? await res.json() : { configured: false };
+    } catch (_) {
+      return { configured: false };
+    }
+  },
+
+  async uploadCookies(cookiesContent) {
+    const res = await fetch(`${SERVER_URL}/api/audio/cookies`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cookiesContent })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to save cookies');
+    }
+    return await res.json();
   }
 };
 

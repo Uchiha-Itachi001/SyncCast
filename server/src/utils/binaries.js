@@ -140,6 +140,7 @@ export function getYtDlpBypassArgs() {
 
   // Cloud/Render support: check multiple cookie locations
   const possibleCookieLocations = [
+    path.resolve(os.tmpdir(), 'synccast_yt_cookies.txt'),
     '/etc/secrets/cookies.txt', // Render Secret File standard path
     '/etc/secrets/youtube_cookies.txt',
     path.resolve(process.cwd(), 'cookies.txt'),
