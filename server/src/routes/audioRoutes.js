@@ -185,15 +185,17 @@ router.post('/youtube', youtubeLimiter, async (req, res) => {
     const ytDlpBinary = await getYtDlpPath();
     const ffmpegBinary = getFfmpegPath();
 
-    // Resilient metadata resolution with mobile/anti-bot client profiles (bypasses Render datacenter IP bot detection)
+    // Resilient metadata resolution with mobile/embedded client profiles (completely avoids blocked desktop web player)
     const clientProfiles = [
-      'youtube:player_client=android,ios,web',
-      'youtube:player_client=android,ios,mweb',
-      'youtube:player_client=web,android'
+      'youtube:player_client=android_embedded',
+      'youtube:player_client=android_music',
+      'youtube:player_client=android_creator',
+      'youtube:player_client=android',
+      'youtube:player_client=tv'
     ];
 
     let meta = null;
-    let winningClient = 'youtube:player_client=android,ios,web';
+    let winningClient = 'youtube:player_client=android_embedded';
     let lastMetaError = null;
 
     for (const clientProfile of clientProfiles) {
@@ -352,13 +354,19 @@ router.post('/youtube', youtubeLimiter, async (req, res) => {
     res.status(201).json(trackInfo);
   } catch (err) {
     console.error('[SyncCast YouTube] Extraction error:', err.message);
+
+    let clientFacingError = err.message;
+    if (err.message.includes('confirm you’re not a bot') || err.message.includes('Sign in to confirm')) {
+      clientFacingError = 'YouTube requires verification for cloud server IPs. To fix on Render: add your exported cookies to the YOUTUBE_COOKIES environment variable, or upload the MP3 directly.';
+    }
+
     emitProgress({
       percent: 0,
       step: 'error',
-      message: `Extraction error: ${err.message}`
+      message: clientFacingError
     });
     res.status(500).json({
-      error: `Failed to extract YouTube audio: ${err.message}`
+      error: `Failed to extract YouTube audio: ${clientFacingError}`
     });
   }
 });

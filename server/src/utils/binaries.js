@@ -125,6 +125,8 @@ export async function ensureBinaries() {
   }
 }
 
+import os from 'os';
+
 /**
  * Returns bypass arguments for cloud/datacenter IPs and optional cookies
  */
@@ -132,24 +134,36 @@ export function getYtDlpBypassArgs() {
   const args = [
     '--no-warnings',
     '--force-ipv4',
-    '--user-agent', 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36'
+    '--no-check-certificates',
+    '--extractor-retries', '3'
   ];
 
-  // Optional: support passing cookies via YOUTUBE_COOKIES env var or cookies.txt file
-  const localCookies = path.resolve(process.cwd(), 'cookies.txt');
-  const serverCookies = path.resolve(__dirname, '..', '..', 'cookies.txt');
-  const envCookies = process.env.YOUTUBE_COOKIES;
+  // Cloud/Render support: check multiple cookie locations
+  const possibleCookieLocations = [
+    '/etc/secrets/cookies.txt', // Render Secret File standard path
+    '/etc/secrets/youtube_cookies.txt',
+    path.resolve(process.cwd(), 'cookies.txt'),
+    path.resolve(__dirname, '..', '..', 'cookies.txt')
+  ];
 
+  const envCookies = process.env.YOUTUBE_COOKIES;
   if (envCookies && envCookies.trim()) {
     try {
-      const tempPath = path.resolve(BIN_DIR, '.yt_cookies.txt');
+      const tempPath = path.resolve(os.tmpdir(), 'synccast_yt_cookies.txt');
       fs.writeFileSync(tempPath, envCookies.trim(), 'utf8');
       args.push('--cookies', tempPath);
-    } catch (_) {}
-  } else if (fs.existsSync(localCookies)) {
-    args.push('--cookies', localCookies);
-  } else if (fs.existsSync(serverCookies)) {
-    args.push('--cookies', serverCookies);
+      return args;
+    } catch (err) {
+      console.warn('[SyncCast Binaries] Could not write YOUTUBE_COOKIES to tmp:', err.message);
+    }
+  }
+
+  for (const cookiePath of possibleCookieLocations) {
+    if (fs.existsSync(cookiePath)) {
+      console.log(`[SyncCast Binaries] Using YouTube cookies from: ${cookiePath}`);
+      args.push('--cookies', cookiePath);
+      break;
+    }
   }
 
   return args;
