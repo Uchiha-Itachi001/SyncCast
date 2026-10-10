@@ -43,9 +43,20 @@ export class ParametricEqualizer {
     const now = this.ctx.currentTime;
     this.gains = { low, mid, high };
 
-    this.lowShelf.gain.linearRampToValueAtTime(low, now + rampTime);
-    this.midPeak.gain.linearRampToValueAtTime(mid, now + rampTime);
-    this.highShelf.gain.linearRampToValueAtTime(high, now + rampTime);
+    try {
+      this.lowShelf.gain.setValueAtTime(this.lowShelf.gain.value, now);
+      this.lowShelf.gain.linearRampToValueAtTime(low, now + rampTime);
+
+      this.midPeak.gain.setValueAtTime(this.midPeak.gain.value, now);
+      this.midPeak.gain.linearRampToValueAtTime(mid, now + rampTime);
+
+      this.highShelf.gain.setValueAtTime(this.highShelf.gain.value, now);
+      this.highShelf.gain.linearRampToValueAtTime(high, now + rampTime);
+    } catch (_) {
+      this.lowShelf.gain.value = low;
+      this.midPeak.gain.value = mid;
+      this.highShelf.gain.value = high;
+    }
   }
 
   /**

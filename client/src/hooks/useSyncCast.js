@@ -16,6 +16,19 @@ export function useSyncCast() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStats, setUploadStats] = useState({ loaded: 0, total: 0, filename: '' });
   const [driftCompensation, setDriftCompensation] = useState({ rate: 1.0, status: 'locked', driftMs: 0 });
+  const [localDriftMs, setLocalDriftMs] = useState(0);
+  const [playbackPosition, setPlaybackPosition] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [isExtractingYt, setIsExtractingYt] = useState(false);
+  const [ytProgress, setYtProgress] = useState({
+    percent: 0,
+    downloadPercent: 0,
+    total: '',
+    speed: '',
+    eta: '',
+    step: 'idle',
+    message: ''
+  });
   const [currentDspProfile, setCurrentDspProfile] = useState('flat');
   const [testPingActive, setTestPingActive] = useState(false);
   const [hostMigrationNotice, setHostMigrationNotice] = useState(null);
@@ -28,11 +41,15 @@ export function useSyncCast() {
   const currentDspProfileRef = useRef(currentDspProfile);
   currentDspProfileRef.current = currentDspProfile;
 
+  const loadingTrackUrlRef = useRef(null);
+
   // Auto-buffer helper ensuring audio buffer is downloaded as soon as a track exists
   const ensureTrackLoaded = useCallback(async (track) => {
     if (!track || !track.url) return;
     if (audioEngine.currentTrackUrl === track.url && audioEngine.audioBuffer) return;
+    if (loadingTrackUrlRef.current === track.url) return;
 
+    loadingTrackUrlRef.current = track.url;
     try {
       setBuffering(true);
       setBufferProgress(0);
@@ -40,6 +57,9 @@ export function useSyncCast() {
       await audioEngine.loadTrack(track.url, (progress) => {
         setBufferProgress(progress);
       });
+      const dur = audioEngine.getDuration();
+      if (dur > 0) setDuration(dur);
+      else if (track.duration > 0) setDuration(track.duration);
       setBuffering(false);
       setBufferProgress(100);
       socketRef.current?.emit('track:buffer_status', { buffered: true });
@@ -47,6 +67,8 @@ export function useSyncCast() {
       setBuffering(false);
       console.error('[SyncCast] Audio buffer failed:', err);
       setError(`Audio loading failed: ${err.message}`);
+    } finally {
+      loadingTrackUrlRef.current = null;
     }
   }, []);
 
@@ -94,6 +116,25 @@ export function useSyncCast() {
       window.removeEventListener('click', handleFirstGesture);
       window.removeEventListener('touchstart', handleFirstGesture);
       window.removeEventListener('keydown', handleFirstGesture);
+    };
+  }, []);
+
+  // Handle track playback natural end cleanly
+  useEffect(() => {
+    audioEngine.onEndedCallback = () => {
+      console.log('[SyncCast] Audio playback reached natural end');
+      if (roomRef.current?.hostSocketId === socketRef.current?.id) {
+        if (roomRef.current?.playlist && roomRef.current.playlist.length > 1) {
+          socketRef.current?.emit('queue:next');
+        } else {
+          socketRef.current?.emit('playback:pause', { currentPosition: 0 });
+          audioEngine.setStartOffset(0);
+          setPlaybackPosition(0);
+        }
+      }
+    };
+    return () => {
+      audioEngine.onEndedCallback = null;
     };
   }, []);
 
@@ -204,10 +245,11 @@ export function useSyncCast() {
           myChannel
         );
 
-        // Start continuous drift monitoring loop (runs every 4 seconds)
-        clockSyncRef.current?.startDriftMonitor(4000, ({ drift, offset: newOffset, rtt: newRtt }) => {
+        // Start continuous drift monitoring loop (fast 1200ms burst with min-RTT filtering)
+        clockSyncRef.current?.startDriftMonitor(1200, ({ drift, offset: newOffset, rtt: newRtt }) => {
           const compensation = audioEngine.compensateDrift(drift);
           setDriftCompensation(compensation);
+          setLocalDriftMs(drift);
           setSyncStats(prev => ({ ...prev, offset: newOffset, rtt: newRtt }));
 
           socket.emit('sync:report', {
@@ -222,9 +264,13 @@ export function useSyncCast() {
       }
     });
 
-    socket.on('playback:pause', () => {
-      audioEngine.stop();
+    socket.on('playback:pause', ({ playbackPosition: pos }) => {
+      audioEngine.stop(pos);
       clockSyncRef.current?.stopDriftMonitor();
+      if (pos !== undefined) {
+        audioEngine.setStartOffset(pos);
+        setPlaybackPosition(pos);
+      }
       setDriftCompensation({ rate: 1.0, status: 'locked', driftMs: 0 });
     });
 
@@ -244,6 +290,13 @@ export function useSyncCast() {
       setTimeout(() => setTestPingActive(false), 600);
     });
 
+    // Real-time YouTube audio extraction telemetry from backend
+    socket.on('youtube:progress', (data) => {
+      if (data) {
+        setYtProgress(data);
+      }
+    });
+
     return () => {
       clockSyncRef.current?.stopDriftMonitor();
       socket.off('connect');
@@ -257,9 +310,33 @@ export function useSyncCast() {
       socket.off('playback:pause');
       socket.off('channel:test_ping');
       socket.off('host:migrated');
+      socket.off('youtube:progress');
     };
   }, [ensureTrackLoaded, performSync]);
 
+  // Continuous playback playhead position & duration ticker (Phase 3 Media Controller)
+  useEffect(() => {
+    const isPlaying = room?.playbackState?.status === 'playing' || room?.playbackState?.status === 'scheduled';
+    if (!isPlaying) {
+      if (room?.playbackState?.playbackPosition !== undefined) {
+        setPlaybackPosition(room.playbackState.playbackPosition);
+      }
+      const dur = audioEngine.getDuration();
+      if (dur > 0) setDuration(dur);
+      else if (room?.currentTrack?.duration > 0) setDuration(room.currentTrack.duration);
+      return;
+    }
+
+    const timer = setInterval(() => {
+      const pos = audioEngine.getCurrentTime();
+      const dur = audioEngine.getDuration();
+      setPlaybackPosition(pos);
+      if (dur > 0) setDuration(dur);
+      else if (room?.currentTrack?.duration > 0) setDuration(room.currentTrack.duration);
+    }, 100);
+
+    return () => clearInterval(timer);
+  }, [room?.playbackState?.status, room?.playbackState?.playbackPosition, room?.currentTrack]);
 
   const createRoom = useCallback(async (hostName) => {
     setError(null);
@@ -304,6 +381,9 @@ export function useSyncCast() {
       await audioEngine.loadTrack(trackData.url, (p) => {
         setBufferProgress(p);
       });
+      const dur = audioEngine.getDuration();
+      if (dur > 0) setDuration(dur);
+      else if (trackData.duration > 0) setDuration(trackData.duration);
       setBuffering(false);
       setBufferProgress(100);
       socketRef.current?.emit('track:buffer_status', { buffered: true });
@@ -311,6 +391,48 @@ export function useSyncCast() {
       setIsUploading(false);
       setBuffering(false);
       setError(`Upload error: ${err.message}`);
+    }
+  }, []);
+
+  // YouTube Audio Extractor & Broadcaster (Phase 4.4)
+  const extractAndSelectYtTrack = useCallback(async (youtubeUrl) => {
+    try {
+      await audioEngine.initAudioContext();
+      setIsAudioUnlocked(true);
+      setError(null);
+      setIsExtractingYt(true);
+      setYtProgress({
+        percent: 5,
+        downloadPercent: 0,
+        total: '',
+        speed: '',
+        eta: '',
+        step: 'metadata',
+        message: 'Initializing YouTube extraction pipeline...'
+      });
+
+      const trackData = await apiService.extractYoutubeAudio(youtubeUrl, socketRef.current?.id);
+      setIsExtractingYt(false);
+
+      socketRef.current?.emit('track:select', trackData);
+
+      setBuffering(true);
+      setBufferProgress(0);
+      await audioEngine.loadTrack(trackData.url, (p) => {
+        setBufferProgress(p);
+      });
+      const ytDur = audioEngine.getDuration();
+      if (ytDur > 0) setDuration(ytDur);
+      else if (trackData.duration > 0) setDuration(trackData.duration);
+      setBuffering(false);
+      setBufferProgress(100);
+      socketRef.current?.emit('track:buffer_status', { buffered: true });
+      return trackData;
+    } catch (err) {
+      setIsExtractingYt(false);
+      setBuffering(false);
+      setError(`YouTube Extraction error: ${err.message}`);
+      throw err;
     }
   }, []);
 
@@ -327,6 +449,7 @@ export function useSyncCast() {
     setBufferProgress(0);
     setIsUploading(false);
     setUploadProgress(0);
+    setIsExtractingYt(false);
     setError(null);
 
     // Disconnect and immediately reconnect to guarantee clean unregistration on server
@@ -346,7 +469,15 @@ export function useSyncCast() {
   }, []);
 
   const pausePlayback = useCallback(() => {
-    socketRef.current?.emit('playback:pause', { currentPosition: 0 });
+    const curPos = audioEngine.getCurrentTime();
+    socketRef.current?.emit('playback:pause', { currentPosition: curPos });
+  }, []);
+
+  const seekPlayback = useCallback((positionSeconds) => {
+    const pos = Math.max(0, positionSeconds);
+    audioEngine.setStartOffset(pos);
+    setPlaybackPosition(pos);
+    socketRef.current?.emit('playback:seek', { position: pos });
   }, []);
 
   const assignChannel = useCallback((targetSocketId, channel) => {
@@ -375,10 +506,14 @@ export function useSyncCast() {
   }, []);
 
   // Phase 4: Collaborative Playlist Queue
-  const addTrackToQueue = useCallback(async (fileOrUrl, isUrl = false, title = '') => {
+  const addTrackToQueue = useCallback(async (fileOrUrl, isUrl = false, title = '', isYoutube = false) => {
     try {
       let trackData;
-      if (isUrl) {
+      if (isYoutube) {
+        setIsExtractingYt(true);
+        trackData = await apiService.extractYoutubeAudio(fileOrUrl);
+        setIsExtractingYt(false);
+      } else if (isUrl) {
         trackData = apiService.createUrlTrack(fileOrUrl, title);
       } else {
         setIsUploading(true);
@@ -394,6 +529,7 @@ export function useSyncCast() {
       return trackData;
     } catch (err) {
       setIsUploading(false);
+      setIsExtractingYt(false);
       setBuffering(false);
       setError(`Add to queue error: ${err.message}`);
     }
@@ -432,6 +568,11 @@ export function useSyncCast() {
     isUploading,
     uploadProgress,
     uploadStats,
+    isExtractingYt,
+    ytProgress,
+    playbackPosition,
+    duration,
+    localDriftMs,
     driftCompensation,
     currentDspProfile,
     testPingActive,
@@ -442,8 +583,10 @@ export function useSyncCast() {
     joinRoom,
     leaveRoom,
     uploadAndSelectTrack,
+    extractAndSelectYtTrack,
     startPlayback,
     pausePlayback,
+    seekPlayback,
     assignChannel,
     updateStagePosition,
     testChannelPing,

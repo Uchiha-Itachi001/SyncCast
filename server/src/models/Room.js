@@ -192,17 +192,19 @@ export class Room {
 
   advanceQueue() {
     this.skipVotes.clear();
-    // Remove currently finished track from head of queue if present
-    if (this.playlist.length > 0 && this.playlist[0].id === this.currentTrack?.id) {
-      this.playlist.shift();
+    // If there is another track queued up in the playlist, advance to it
+    if (this.playlist.length > 1) {
+      if (this.playlist[0].id === this.currentTrack?.id) {
+        this.playlist.shift();
+      }
+      this.currentTrack = this.playlist[0] || this.currentTrack;
+      this.resetBufferStates();
+      return this.currentTrack;
     }
 
-    if (this.playlist.length > 0) {
-      this.currentTrack = this.playlist[0];
-      this.resetBufferStates();
-    } else {
-      this.currentTrack = null;
-      this.playbackState.status = 'idle';
+    // If no subsequent track in queue, preserve current track and rewind to start (never destroy currentTrack)
+    if (this.currentTrack) {
+      this.playbackState.status = 'paused';
       this.playbackState.scheduledStartTime = null;
       this.playbackState.playbackPosition = 0;
     }

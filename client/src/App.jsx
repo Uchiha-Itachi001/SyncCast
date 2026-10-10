@@ -20,6 +20,11 @@ export default function App() {
     uploadProgress,
     uploadStats,
     driftCompensation,
+    localDriftMs,
+    playbackPosition,
+    duration,
+    isExtractingYt,
+    ytProgress,
     currentDspProfile,
     testPingActive,
     hostMigrationNotice,
@@ -29,8 +34,10 @@ export default function App() {
     joinRoom,
     leaveRoom,
     uploadAndSelectTrack,
+    extractAndSelectYtTrack,
     startPlayback,
     pausePlayback,
+    seekPlayback,
     assignChannel,
     updateStagePosition,
     testChannelPing,
@@ -129,8 +136,15 @@ export default function App() {
             room={room}
             buffering={buffering}
             onUploadTrack={uploadAndSelectTrack}
+            onExtractYtTrack={extractAndSelectYtTrack}
+            isExtractingYt={isExtractingYt}
+            ytProgress={ytProgress}
             onStartPlayback={startPlayback}
             onPausePlayback={pausePlayback}
+            onSeekPlayback={seekPlayback}
+            playbackPosition={playbackPosition}
+            duration={duration}
+            localDriftMs={localDriftMs}
             onAssignChannel={assignChannel}
             onUpdatePosition={updateStagePosition}
             onTestPing={testChannelPing}
@@ -138,6 +152,7 @@ export default function App() {
             uploadProgress={uploadProgress}
             uploadStats={uploadStats}
             bufferProgress={bufferProgress}
+            currentDspProfile={currentDspProfile}
             onSetDspProfile={setDspProfile}
             onAddTrack={addTrackToQueue}
             onRemoveTrack={removeTrackFromQueue}
@@ -155,9 +170,10 @@ export default function App() {
             buffering={buffering}
             bufferProgress={bufferProgress}
             driftCompensation={driftCompensation}
+            localDriftMs={localDriftMs}
+            playbackPosition={playbackPosition}
+            duration={duration}
             currentDspProfile={currentDspProfile}
-            onSetDspProfile={setDspProfile}
-            onSetCustomEq={setCustomEq}
             testPingActive={testPingActive}
             onAddTrack={addTrackToQueue}
             onVoteSkip={voteToSkip}

@@ -60,8 +60,17 @@ export class AudioEngine {
     await this.initAudioContext();
     this.currentTrackUrl = url;
 
-    console.log('[SyncCast AudioEngine] Fetching track:', url);
-    const response = await fetch(url);
+    // Resolve relative URL to backend if needed
+    let fetchUrl = url;
+    if (url.startsWith('/api/')) {
+      const serverBase = import.meta.env.VITE_SERVER_URL || `http://${window.location.hostname}:3001`;
+      fetchUrl = `${serverBase}${url}`;
+    } else if (fetchUrl.includes('localhost') && window.location.hostname && window.location.hostname !== 'localhost') {
+      fetchUrl = fetchUrl.replace('localhost', window.location.hostname);
+    }
+
+    console.log('[SyncCast AudioEngine] Fetching track:', fetchUrl);
+    const response = await fetch(fetchUrl);
     if (!response.ok) {
       throw new Error(`Failed to download audio file (${response.status}): ${response.statusText}`);
     }
@@ -154,17 +163,44 @@ export class AudioEngine {
     this.channelRouter.route(this.equalizer.outputNode, channelMode);
 
     // 6. Schedule exact start
+    this.scheduledContextTime = scheduledContextTime;
+    this.startOffset = startOffset;
     this.sourceNode.start(scheduledContextTime, startOffset);
     this.isPlaying = true;
 
     this.sourceNode.onended = () => {
       this.isPlaying = false;
+      this.scheduledContextTime = null;
+      if (this.onEndedCallback) {
+        this.onEndedCallback();
+      }
     };
 
     return {
       scheduledContextTime,
       delaySeconds
     };
+  }
+
+  /**
+   * Returns current playback playhead in seconds
+   */
+  getCurrentTime() {
+    if (!this.isPlaying || !this.ctx || this.scheduledContextTime === null) {
+      return this.startOffset || 0;
+    }
+    const elapsed = (this.ctx.currentTime - this.scheduledContextTime) * (this.currentPlaybackRate || 1.0);
+    if (elapsed < 0) return this.startOffset || 0;
+    const current = (this.startOffset || 0) + elapsed;
+    const dur = this.getDuration();
+    return dur > 0 ? Math.min(dur, current) : current;
+  }
+
+  /**
+   * Returns total loaded audio buffer duration in seconds
+   */
+  getDuration() {
+    return this.audioBuffer ? this.audioBuffer.duration : 0;
   }
 
 
@@ -224,7 +260,7 @@ export class AudioEngine {
     }
   }
 
-  stop() {
+  stop(currentOffset) {
     if (this.sourceNode) {
       try {
         this.sourceNode.stop();
@@ -233,6 +269,14 @@ export class AudioEngine {
       this.sourceNode = null;
     }
     this.isPlaying = false;
+    this.scheduledContextTime = null;
+    if (typeof currentOffset === 'number' && currentOffset >= 0) {
+      this.startOffset = currentOffset;
+    }
+  }
+
+  setStartOffset(offset) {
+    this.startOffset = Math.max(0, offset || 0);
   }
 
   setVolume(vol) {

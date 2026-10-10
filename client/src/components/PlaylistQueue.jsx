@@ -64,7 +64,9 @@ export function PlaylistQueue({
 
     try {
       setIsSubmitting(true);
-      await onAddTrack(urlInput.trim(), true, titleInput.trim());
+      const trimmed = urlInput.trim();
+      const isYt = trimmed.includes('youtube.com') || trimmed.includes('youtu.be');
+      await onAddTrack(trimmed, !isYt, titleInput.trim(), isYt);
       setUrlInput('');
       setTitleInput('');
       setShowAddBay(false);

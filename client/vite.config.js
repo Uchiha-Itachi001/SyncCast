@@ -7,11 +7,23 @@ export default defineConfig({
   envDir: import.meta.dirname,
   server: {
     host: '0.0.0.0',
-    port: 5173
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true
+      },
+      '/socket.io': {
+        target: 'http://localhost:3001',
+        ws: true
+      }
+    }
   },
   preview: {
     host: '0.0.0.0',
     port: 5173
+  },
+  build: {
+    target: 'es2020'
   }
 });
-

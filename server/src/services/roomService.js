@@ -202,6 +202,21 @@ export class RoomService {
     room.playbackState.updatedAt = Date.now();
     return room;
   }
+
+  seekPlayback(code, positionSeconds, startDelayMs = CONFIG.SCHEDULE_AHEAD_MS) {
+    const room = this.rooms.get(code);
+    if (!room) throw new Error(`Room ${code} not found`);
+
+    room.playbackState.playbackPosition = Math.max(0, positionSeconds);
+    room.playbackState.updatedAt = Date.now();
+    let scheduledTime = null;
+
+    if (room.playbackState.status === 'playing' || room.playbackState.status === 'scheduled') {
+      scheduledTime = Date.now() + startDelayMs;
+      room.playbackState.scheduledStartTime = scheduledTime;
+    }
+    return { room, scheduledTime, position: room.playbackState.playbackPosition };
+  }
 }
 
 export const roomService = new RoomService();

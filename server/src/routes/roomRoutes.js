@@ -17,9 +17,14 @@ router.get('/network', (req, res) => {
   });
 });
 
-// Room details endpoint
+// Room details endpoint (Input validated: 4 digits)
 router.get('/:code', (req, res) => {
-  const room = roomService.getRoom(req.params.code);
+  const { code } = req.params;
+  if (!code || !/^\d{4}$/.test(code)) {
+    return res.status(400).json({ error: 'Invalid room code format. Must be 4 digits.' });
+  }
+
+  const room = roomService.getRoom(code);
   if (!room) {
     return res.status(404).json({ error: 'Room not found' });
   }
