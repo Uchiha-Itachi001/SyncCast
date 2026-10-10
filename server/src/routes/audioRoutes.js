@@ -12,7 +12,7 @@ import {
   ALLOWED_AUDIO_MIMES
 } from '../utils/security.js';
 import { createRateLimiter } from '../middleware/rateLimiter.js';
-import { getYtDlpPath, getFfmpegPath } from '../utils/binaries.js';
+import { getYtDlpPath, getFfmpegPath, getYtDlpBypassArgs } from '../utils/binaries.js';
 
 const execFilePromise = util.promisify(execFile);
 const router = express.Router();
@@ -185,14 +185,41 @@ router.post('/youtube', youtubeLimiter, async (req, res) => {
     const ytDlpBinary = await getYtDlpPath();
     const ffmpegBinary = getFfmpegPath();
 
-    const { stdout: metaJson } = await execFilePromise(ytDlpBinary, [
-      '--dump-json',
-      '--no-warnings',
-      '--no-playlist',
-      trimmedUrl
-    ], { timeout: 25000 });
+    // Resilient metadata resolution with mobile/anti-bot client profiles (bypasses Render datacenter IP bot detection)
+    const clientProfiles = [
+      'youtube:player_client=android,ios,web',
+      'youtube:player_client=android,ios,mweb',
+      'youtube:player_client=web,android'
+    ];
 
-    const meta = JSON.parse(metaJson);
+    let meta = null;
+    let winningClient = 'youtube:player_client=android,ios,web';
+    let lastMetaError = null;
+
+    for (const clientProfile of clientProfiles) {
+      try {
+        const bypassArgs = getYtDlpBypassArgs();
+        const args = [
+          '--dump-json',
+          '--no-playlist',
+          '--extractor-args', clientProfile,
+          ...bypassArgs,
+          trimmedUrl
+        ];
+        const { stdout: metaJson } = await execFilePromise(ytDlpBinary, args, { timeout: 25000 });
+        meta = JSON.parse(metaJson);
+        winningClient = clientProfile;
+        break;
+      } catch (err) {
+        lastMetaError = err;
+        console.warn(`[SyncCast YouTube] Metadata profile (${clientProfile}) failed: ${err.message}. Retrying fallback client...`);
+      }
+    }
+
+    if (!meta) {
+      throw lastMetaError || new Error('Failed to resolve video stream metadata from YouTube');
+    }
+
     const title = meta.title || 'YouTube Audio';
     const author = meta.uploader || meta.channel || 'YouTube Creator';
     const duration = parseInt(meta.duration, 10) || 0;
@@ -222,16 +249,21 @@ router.post('/youtube', youtubeLimiter, async (req, res) => {
       message: `Step 2/3: Downloading stream for "${title.slice(0, 35)}..."`
     });
 
-    // Step 2: Build yt-dlp arguments (use ffmpeg for mp3 if present, or best audio directly)
+    // Step 2: Build yt-dlp arguments with datacenter bot bypass and fallback formats
     const ytArgs = [
       '--no-playlist',
       '--max-filesize', '50M',
       '--newline',
-      '-o', outTemplate
+      '-o', outTemplate,
+      '--extractor-args', winningClient,
+      ...getYtDlpBypassArgs()
     ];
 
     if (ffmpegBinary) {
-      ytArgs.push('-x', '--audio-format', 'mp3', '--ffmpeg-location', ffmpegBinary);
+      ytArgs.push('-x', '--audio-format', 'mp3');
+      if (path.isAbsolute(ffmpegBinary)) {
+        ytArgs.push('--ffmpeg-location', ffmpegBinary);
+      }
     } else {
       ytArgs.push('-f', 'bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio/best');
     }

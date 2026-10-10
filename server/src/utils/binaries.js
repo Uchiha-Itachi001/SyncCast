@@ -124,3 +124,33 @@ export async function ensureBinaries() {
     }
   }
 }
+
+/**
+ * Returns bypass arguments for cloud/datacenter IPs and optional cookies
+ */
+export function getYtDlpBypassArgs() {
+  const args = [
+    '--no-warnings',
+    '--force-ipv4',
+    '--user-agent', 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36'
+  ];
+
+  // Optional: support passing cookies via YOUTUBE_COOKIES env var or cookies.txt file
+  const localCookies = path.resolve(process.cwd(), 'cookies.txt');
+  const serverCookies = path.resolve(__dirname, '..', '..', 'cookies.txt');
+  const envCookies = process.env.YOUTUBE_COOKIES;
+
+  if (envCookies && envCookies.trim()) {
+    try {
+      const tempPath = path.resolve(BIN_DIR, '.yt_cookies.txt');
+      fs.writeFileSync(tempPath, envCookies.trim(), 'utf8');
+      args.push('--cookies', tempPath);
+    } catch (_) {}
+  } else if (fs.existsSync(localCookies)) {
+    args.push('--cookies', localCookies);
+  } else if (fs.existsSync(serverCookies)) {
+    args.push('--cookies', serverCookies);
+  }
+
+  return args;
+}
