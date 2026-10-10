@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Volume2, Sliders, ShieldCheck, Radio, Music, Cpu, Sparkles, Activity } from 'lucide-react';
+import { Volume2, Sliders, ShieldCheck, Radio, Music, Cpu, Sparkles, Activity, LogOut } from 'lucide-react';
 import { audioEngine } from '../audio/AudioEngine.js';
 import { PlaylistQueue } from './PlaylistQueue.jsx';
 
@@ -14,7 +14,11 @@ export function GuestView({
   onSetCustomEq,
   testPingActive,
   onAddTrack,
-  onVoteSkip
+  onVoteSkip,
+  onTestLocalSound,
+  isAudioUnlocked,
+  onUnlockAudio,
+  onLeaveRoom
 }) {
   const [localVolume, setLocalVolume] = useState(1);
   const [eqGains, setEqGains] = useState({ low: 0, mid: 0, high: 0 });
@@ -56,12 +60,17 @@ export function GuestView({
         {/* Top Receiver Status */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <div className="led-diode led-emerald" />
-            <span className="tech-label">RECEIVER SYNCED</span>
+            <div className={`led-diode ${isAudioUnlocked ? 'led-emerald' : 'led-amber'}`} />
+            <span className="tech-label">{isAudioUnlocked ? 'TRANSDUCER ARMED' : 'AUDIO RESTRICTED'}</span>
           </div>
-          <span className="tech-label" style={{ color: 'var(--text-main)' }}>
-            ROOM {room.code}
-          </span>
+          <button
+            type="button"
+            onClick={onTestLocalSound || onUnlockAudio}
+            className="btn-hardware-secondary"
+            style={{ padding: '4px 10px', fontSize: '0.68rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+          >
+            <Volume2 size={12} color="#38bdf8" /> TEST BEEP
+          </button>
         </div>
 
         {/* Large Channel Callout Display */}
@@ -264,10 +273,33 @@ export function GuestView({
         buffering={buffering}
       />
 
+      {onLeaveRoom && (
+        <button
+          type="button"
+          onClick={onLeaveRoom}
+          className="btn-hardware-secondary"
+          style={{
+            width: '100%',
+            padding: '12px',
+            fontSize: '0.78rem',
+            color: '#fda4af',
+            borderColor: 'rgba(244, 63, 94, 0.4)',
+            background: 'rgba(244, 63, 94, 0.08)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '8px',
+            cursor: 'pointer'
+          }}
+          title="Disconnect from this speaker group and return to lobby"
+        >
+          <LogOut size={14} color="#f43f5e" /> DISCONNECT &amp; LEAVE ROOM
+        </button>
+      )}
+
       <div style={{ textAlign: 'center', fontSize: '0.72rem', fontFamily: 'var(--font-mono)', color: 'var(--text-dim)' }}>
         WAKE_LOCK ENGAGED &bull; CONTINUOUS DRIFT COMPENSATION ACTIVE
       </div>
     </div>
-
   );
 }

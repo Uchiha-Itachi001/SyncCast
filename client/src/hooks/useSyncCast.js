@@ -12,6 +12,9 @@ export function useSyncCast() {
   const [syncStats, setSyncStats] = useState({ offset: 0, rtt: 0, calibrated: false });
   const [buffering, setBuffering] = useState(false);
   const [bufferProgress, setBufferProgress] = useState(0);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadStats, setUploadStats] = useState({ loaded: 0, total: 0, filename: '' });
   const [driftCompensation, setDriftCompensation] = useState({ rate: 1.0, status: 'locked', driftMs: 0 });
   const [currentDspProfile, setCurrentDspProfile] = useState('flat');
   const [testPingActive, setTestPingActive] = useState(false);
@@ -20,12 +23,87 @@ export function useSyncCast() {
 
   const clockSyncRef = useRef(null);
   const socketRef = useRef(null);
+  const roomRef = useRef(room);
+  roomRef.current = room;
+  const currentDspProfileRef = useRef(currentDspProfile);
+  currentDspProfileRef.current = currentDspProfile;
 
-  // Initialize socket & clock synchronizer
+  // Auto-buffer helper ensuring audio buffer is downloaded as soon as a track exists
+  const ensureTrackLoaded = useCallback(async (track) => {
+    if (!track || !track.url) return;
+    if (audioEngine.currentTrackUrl === track.url && audioEngine.audioBuffer) return;
+
+    try {
+      setBuffering(true);
+      setBufferProgress(0);
+      console.log('[SyncCast] Buffering track:', track.originalName || track.filename);
+      await audioEngine.loadTrack(track.url, (progress) => {
+        setBufferProgress(progress);
+      });
+      setBuffering(false);
+      setBufferProgress(100);
+      socketRef.current?.emit('track:buffer_status', { buffered: true });
+    } catch (err) {
+      setBuffering(false);
+      console.error('[SyncCast] Audio buffer failed:', err);
+      setError(`Audio loading failed: ${err.message}`);
+    }
+  }, []);
+
+  const performSync = useCallback(async () => {
+    if (!clockSyncRef.current || !socketRef.current) return;
+    try {
+      const stats = await clockSyncRef.current.calibrate();
+      setSyncStats({ ...stats, calibrated: true });
+      socketRef.current.emit('sync:report', {
+        clockOffset: stats.offset,
+        rtt: stats.rtt,
+        drift: 0
+      });
+    } catch (err) {
+      console.warn('[SyncCast] Clock sync failed:', err);
+    }
+  }, []);
+
+  const unlockAudio = useCallback(async () => {
+    const success = await audioEngine.initAudioContext();
+    setIsAudioUnlocked(success);
+    if (socketRef.current && success) {
+      socketRef.current.emit('audio:unlock', { isUnlocked: true });
+    }
+    return success;
+  }, []);
+
+  // Global first-interaction unlock (any touch/click anywhere unlocks mobile Web Audio)
+  useEffect(() => {
+    const handleFirstGesture = async () => {
+      try {
+        const unlocked = await audioEngine.initAudioContext();
+        if (unlocked) {
+          setIsAudioUnlocked(true);
+          socketRef.current?.emit('audio:unlock', { isUnlocked: true });
+        }
+      } catch (_) {}
+    };
+
+    window.addEventListener('click', handleFirstGesture, { passive: true });
+    window.addEventListener('touchstart', handleFirstGesture, { passive: true });
+    window.addEventListener('keydown', handleFirstGesture, { passive: true });
+
+    return () => {
+      window.removeEventListener('click', handleFirstGesture);
+      window.removeEventListener('touchstart', handleFirstGesture);
+      window.removeEventListener('keydown', handleFirstGesture);
+    };
+  }, []);
+
+  // Initialize socket & clock synchronizer once
   useEffect(() => {
     const socket = socketService.getSocket();
     socketRef.current = socket;
-    clockSyncRef.current = new ClockSynchronizer(socket);
+    if (!clockSyncRef.current) {
+      clockSyncRef.current = new ClockSynchronizer(socket);
+    }
 
     socket.on('connect', () => {
       setConnected(true);
@@ -61,6 +139,7 @@ export function useSyncCast() {
         lastSocketId: socket.id
       }));
       performSync();
+      if (roomData.currentTrack) ensureTrackLoaded(roomData.currentTrack);
     });
 
     socket.on('room:joined', (roomData) => {
@@ -75,14 +154,22 @@ export function useSyncCast() {
         lastSocketId: socket.id
       }));
       performSync();
+      // Auto-load track if room already has an active track loaded!
+      if (roomData.currentTrack) ensureTrackLoaded(roomData.currentTrack);
     });
 
     socket.on('room:update', (roomData) => {
       setRoom(roomData);
       setIsHost(roomData.hostSocketId === socket.id);
+
+      // Auto-load track if it appeared or changed
+      if (roomData.currentTrack && roomData.currentTrack.url !== audioEngine.currentTrackUrl) {
+        ensureTrackLoaded(roomData.currentTrack);
+      }
+
       // Sync DSP profile if changed remotely
       const myDev = roomData.devices?.find((d) => d.id === socket.id);
-      if (myDev?.dspProfile && myDev.dspProfile !== currentDspProfile) {
+      if (myDev?.dspProfile && myDev.dspProfile !== currentDspProfileRef.current) {
         audioEngine.setEqProfile(myDev.dspProfile);
         setCurrentDspProfile(myDev.dspProfile);
       }
@@ -95,35 +182,22 @@ export function useSyncCast() {
       }
     });
 
-
     // When track is selected, download with live progress tracking (Phase 3.3)
     socket.on('track:select', async ({ track }) => {
-      try {
-        setBuffering(true);
-        setBufferProgress(0);
-
-        await audioEngine.loadTrack(track.url, (progress) => {
-          setBufferProgress(progress);
-          socket.emit('track:buffer_progress', { progress });
-        });
-
-        setBuffering(false);
-        setBufferProgress(100);
-        socket.emit('track:buffer_status', { buffered: true });
-      } catch (err) {
-        setBuffering(false);
-        setError(`Audio loading failed: ${err.message}`);
-      }
+      ensureTrackLoaded(track);
     });
 
     // When host triggers playback, schedule with sample accuracy and start drift monitor (Phase 3.1)
-    socket.on('playback:start', ({ scheduledTime, playbackPosition }) => {
+    socket.on('playback:start', async ({ scheduledTime, playbackPosition }) => {
       try {
         const offset = clockSyncRef.current?.offset || 0;
-        const myDevice = room?.devices?.find((d) => d.id === socket.id);
+        const currentRoom = roomRef.current;
+        const myDevice = currentRoom?.devices?.find((d) => d.id === socket.id);
         const myChannel = myDevice?.channel || 'mono';
 
-        audioEngine.schedulePlayback(
+        console.log('[SyncCast] Received playback:start. Server T:', scheduledTime, 'Offset:', offset, 'Channel:', myChannel);
+
+        await audioEngine.schedulePlayback(
           scheduledTime,
           offset,
           playbackPosition || 0,
@@ -143,7 +217,8 @@ export function useSyncCast() {
           });
         });
       } catch (err) {
-        setError(`Playback scheduling error: ${err.message}`);
+        console.error('[SyncCast] Playback schedule error:', err);
+        setError(`Playback error: ${err.message}`);
       }
     });
 
@@ -183,51 +258,49 @@ export function useSyncCast() {
       socket.off('channel:test_ping');
       socket.off('host:migrated');
     };
-  }, [room?.devices, currentDspProfile]);
+  }, [ensureTrackLoaded, performSync]);
 
 
-  const performSync = useCallback(async () => {
-    if (!clockSyncRef.current || !socketRef.current) return;
-    try {
-      const stats = await clockSyncRef.current.calibrate();
-      setSyncStats({ ...stats, calibrated: true });
-      socketRef.current.emit('sync:report', {
-        clockOffset: stats.offset,
-        rtt: stats.rtt,
-        drift: 0
-      });
-    } catch (err) {
-      console.warn('Clock sync failed:', err);
-    }
-  }, []);
-
-  const unlockAudio = useCallback(async () => {
-    const success = await audioEngine.initAudioContext();
-    setIsAudioUnlocked(success);
-    if (socketRef.current && success) {
-      socketRef.current.emit('audio:unlock', { isUnlocked: true });
-    }
-    return success;
-  }, []);
-
-  const createRoom = useCallback((hostName) => {
+  const createRoom = useCallback(async (hostName) => {
     setError(null);
+    try {
+      await audioEngine.initAudioContext();
+      setIsAudioUnlocked(true);
+    } catch (_) {}
     socketRef.current?.emit('room:create', { hostName });
   }, []);
 
-  const joinRoom = useCallback((roomCode, deviceName) => {
+  const joinRoom = useCallback(async (roomCode, deviceName) => {
     setError(null);
+    try {
+      await audioEngine.initAudioContext();
+      setIsAudioUnlocked(true);
+    } catch (_) {}
     socketRef.current?.emit('room:join', { roomCode, deviceName });
   }, []);
 
   const uploadAndSelectTrack = useCallback(async (file) => {
     try {
+      await audioEngine.initAudioContext();
+      setIsAudioUnlocked(true);
+      setError(null);
+      setIsUploading(true);
+      setUploadProgress(0);
+      setUploadStats({ loaded: 0, total: file.size, filename: file.name });
+
+      const trackData = await apiService.uploadAudio(file, (p) => {
+        setUploadProgress(p.percent);
+        setUploadStats(p);
+      });
+
+      setIsUploading(false);
+      setUploadProgress(100);
+
+      socketRef.current?.emit('track:select', trackData);
+
+      // Host buffers own track with live download & decode progress tracking
       setBuffering(true);
       setBufferProgress(0);
-      setError(null);
-      const trackData = await apiService.uploadAudio(file);
-      socketRef.current?.emit('track:select', trackData);
-      // Host buffers own track with progress tracking
       await audioEngine.loadTrack(trackData.url, (p) => {
         setBufferProgress(p);
       });
@@ -235,12 +308,40 @@ export function useSyncCast() {
       setBufferProgress(100);
       socketRef.current?.emit('track:buffer_status', { buffered: true });
     } catch (err) {
+      setIsUploading(false);
       setBuffering(false);
       setError(`Upload error: ${err.message}`);
     }
   }, []);
 
-  const startPlayback = useCallback((delayMs = 2000) => {
+  const leaveRoom = useCallback(() => {
+    sessionStorage.removeItem('synccast_session');
+    if (window.location.search) {
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+    audioEngine.stop();
+    clockSyncRef.current?.stopDriftMonitor();
+    setRoom(null);
+    setIsHost(false);
+    setBuffering(false);
+    setBufferProgress(0);
+    setIsUploading(false);
+    setUploadProgress(0);
+    setError(null);
+
+    // Disconnect and immediately reconnect to guarantee clean unregistration on server
+    if (socketRef.current) {
+      socketRef.current.emit('room:leave');
+      socketRef.current.disconnect();
+      socketRef.current.connect();
+    }
+  }, []);
+
+  const startPlayback = useCallback(async (delayMs = 2000) => {
+    try {
+      await audioEngine.initAudioContext();
+      setIsAudioUnlocked(true);
+    } catch (_) {}
     socketRef.current?.emit('playback:schedule', { startDelayMs: delayMs });
   }, []);
 
@@ -280,13 +381,19 @@ export function useSyncCast() {
       if (isUrl) {
         trackData = apiService.createUrlTrack(fileOrUrl, title);
       } else {
-        setBuffering(true);
-        trackData = await apiService.uploadAudio(fileOrUrl);
-        setBuffering(false);
+        setIsUploading(true);
+        setUploadProgress(0);
+        setUploadStats({ loaded: 0, total: fileOrUrl.size, filename: fileOrUrl.name });
+        trackData = await apiService.uploadAudio(fileOrUrl, (p) => {
+          setUploadProgress(p.percent);
+          setUploadStats(p);
+        });
+        setIsUploading(false);
       }
       socketRef.current?.emit('queue:track_add', { trackData });
       return trackData;
     } catch (err) {
+      setIsUploading(false);
       setBuffering(false);
       setError(`Add to queue error: ${err.message}`);
     }
@@ -304,6 +411,16 @@ export function useSyncCast() {
     socketRef.current?.emit('queue:vote_skip');
   }, []);
 
+  const playLocalTestTone = useCallback(async () => {
+    try {
+      await audioEngine.initAudioContext();
+      setIsAudioUnlocked(true);
+      await audioEngine.playTestPing(880, 0.4);
+    } catch (err) {
+      console.warn('Test tone failed:', err);
+    }
+  }, []);
+
   return {
     connected,
     room,
@@ -312,6 +429,9 @@ export function useSyncCast() {
     syncStats,
     buffering,
     bufferProgress,
+    isUploading,
+    uploadProgress,
+    uploadStats,
     driftCompensation,
     currentDspProfile,
     testPingActive,
@@ -320,6 +440,7 @@ export function useSyncCast() {
     unlockAudio,
     createRoom,
     joinRoom,
+    leaveRoom,
     uploadAndSelectTrack,
     startPlayback,
     pausePlayback,
@@ -332,6 +453,7 @@ export function useSyncCast() {
     removeTrackFromQueue,
     advanceQueueNext,
     voteToSkip,
-    performSync
+    performSync,
+    playLocalTestTone
   };
 }

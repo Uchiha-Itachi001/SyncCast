@@ -34,68 +34,75 @@ export class AudioEngine {
     }
 
     if (this.ctx.state === 'suspended') {
-      await this.ctx.resume();
+      try {
+        await this.ctx.resume();
+      } catch (_) {}
     }
+
+    // Play a 1-sample silent impulse buffer to kick hardware DAC out of sleep on mobile WebKit / iOS
+    try {
+      const sampleRate = this.ctx.sampleRate || 44100;
+      const dummyBuffer = this.ctx.createBuffer(1, 1, sampleRate);
+      const dummySource = this.ctx.createBufferSource();
+      dummySource.buffer = dummyBuffer;
+      dummySource.connect(this.ctx.destination);
+      dummySource.start(0);
+    } catch (_) {}
 
     this.isUnlocked = this.ctx.state === 'running';
     return this.isUnlocked;
   }
 
   /**
-   * Downloads full audio file over LAN with chunked stream progress tracking (Phase 3.3)
+   * Downloads full audio file over LAN/WAN and decodes audio buffer
    */
   async loadTrack(url, onProgress) {
     await this.initAudioContext();
     this.currentTrackUrl = url;
 
+    console.log('[SyncCast AudioEngine] Fetching track:', url);
     const response = await fetch(url);
     if (!response.ok) {
-      throw new Error(`Failed to download audio file: ${response.statusText}`);
+      throw new Error(`Failed to download audio file (${response.status}): ${response.statusText}`);
     }
 
-    const contentLength = response.headers.get('content-length');
-    const totalBytes = contentLength ? parseInt(contentLength, 10) : 0;
-
-    let arrayBuffer;
-    if (response.body && totalBytes > 0) {
-      const reader = response.body.getReader();
-      const chunks = [];
-      let receivedBytes = 0;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        receivedBytes += value.length;
-        if (onProgress) {
-          const percent = Math.min(99, Math.round((receivedBytes / totalBytes) * 100));
-          onProgress(percent);
-        }
-      }
-
-      // Combine chunks into single ArrayBuffer
-      const combined = new Uint8Array(receivedBytes);
-      let position = 0;
-      for (const chunk of chunks) {
-        combined.set(chunk, position);
-        position += chunk.length;
-      }
-      arrayBuffer = combined.buffer;
-    } else {
-      arrayBuffer = await response.arrayBuffer();
-    }
-
+    const arrayBuffer = await response.arrayBuffer();
     if (onProgress) onProgress(100);
-    this.audioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
+
+    // Decode audio data safely (supporting both Promise and callback syntax for all browsers)
+    this.audioBuffer = await new Promise((resolve, reject) => {
+      this.ctx.decodeAudioData(
+        arrayBuffer.slice(0),
+        (buf) => resolve(buf),
+        (err) => reject(err || new Error('Audio decoding failed'))
+      );
+    });
+
+    console.log('[SyncCast AudioEngine] Audio decoded successfully. Duration:', this.audioBuffer.duration, 'sec');
     return this.audioBuffer;
   }
 
   /**
    * Schedules audio to start exactly at server timestamp T through EQ and spatial router
    */
-  schedulePlayback(scheduledServerTime, serverOffset, position = 0, channelMode = 'mono') {
-    if (!this.audioBuffer || !this.ctx) {
-      throw new Error('Audio engine not loaded or buffer missing');
+  async schedulePlayback(scheduledServerTime, serverOffset, position = 0, channelMode = 'mono') {
+    if (!this.ctx) {
+      await this.initAudioContext();
+    }
+
+    if (this.ctx.state === 'suspended') {
+      try {
+        await this.ctx.resume();
+      } catch (_) {}
+    }
+
+    if (!this.audioBuffer) {
+      if (this.currentTrackUrl) {
+        console.warn('[SyncCast AudioEngine] Buffer was null, emergency loading track:', this.currentTrackUrl);
+        await this.loadTrack(this.currentTrackUrl);
+      } else {
+        throw new Error('Audio engine buffer missing and no track URL loaded');
+      }
     }
 
     // Stop existing playback if any
@@ -104,10 +111,37 @@ export class AudioEngine {
     // 1. Convert server target T to client wallclock
     const clientWallclockTarget = scheduledServerTime - serverOffset;
     // 2. Compute delta until start in seconds
-    const delaySeconds = (clientWallclockTarget - Date.now()) / 1000;
+    let delaySeconds = (clientWallclockTarget - Date.now()) / 1000;
 
-    // 3. Convert to AudioContext hardware clock
-    const scheduledContextTime = this.ctx.currentTime + Math.max(0, delaySeconds);
+    // Guard against extreme clock skew: clamp delay to max 2.5 seconds
+    if (delaySeconds > 2.5) {
+      console.warn(`[SyncCast] Scheduled delay ${delaySeconds.toFixed(2)}s clamped to 1.5s to prevent stalled start`);
+      delaySeconds = 1.5;
+    }
+
+    let startOffset = position;
+    let scheduledContextTime;
+
+    if (delaySeconds < 0) {
+      // Start time already passed: advance into audio track only if delay is within normal transit window (< 2.0s)
+      if (Math.abs(delaySeconds) < 2.0) {
+        startOffset = Math.min(Math.max(0, this.audioBuffer.duration - 0.2), position + Math.abs(delaySeconds));
+      } else {
+        // Extreme negative delta indicates clock skew rather than audio already playing
+        console.warn(`[SyncCast] Negative delay ${delaySeconds.toFixed(2)}s clamped; starting from offset ${position}s.`);
+        startOffset = position;
+      }
+      scheduledContextTime = this.ctx.currentTime;
+    } else {
+      scheduledContextTime = this.ctx.currentTime + delaySeconds;
+    }
+
+    // Never exceed audio buffer duration
+    if (this.audioBuffer.duration && startOffset >= this.audioBuffer.duration) {
+      startOffset = Math.max(0, this.audioBuffer.duration - 0.5);
+    }
+
+    console.log(`[SyncCast AudioEngine] Scheduling playback: delay=${delaySeconds.toFixed(3)}s, contextTime=${scheduledContextTime.toFixed(3)}, offset=${startOffset.toFixed(2)}s, channel=${channelMode}, ctxState=${this.ctx.state}`);
 
     // 4. Create source node and reset playback rate
     this.sourceNode = this.ctx.createBufferSource();
@@ -120,7 +154,7 @@ export class AudioEngine {
     this.channelRouter.route(this.equalizer.outputNode, channelMode);
 
     // 6. Schedule exact start
-    this.sourceNode.start(scheduledContextTime, position);
+    this.sourceNode.start(scheduledContextTime, startOffset);
     this.isPlaying = true;
 
     this.sourceNode.onended = () => {
@@ -132,6 +166,7 @@ export class AudioEngine {
       delaySeconds
     };
   }
+
 
   /**
    * Micro-rate drift compensation (Phase 3.1)

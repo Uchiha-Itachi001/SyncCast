@@ -10,13 +10,14 @@ class SocketService {
       this.socket.disconnect();
     }
 
-    // Connect to server (LAN IP:3001 in dev, window.location.origin on Render / production)
-    const defaultUrl = import.meta.env.PROD
+    // Connect to server (explicit VITE_SERVER_URL, origin if deployed, or LAN IP:3001)
+    const defaultUrl = import.meta.env.VITE_SERVER_URL || (import.meta.env.PROD
       ? window.location.origin
-      : (import.meta.env.VITE_SERVER_URL || `http://${window.location.hostname}:3001`);
+      : `http://${window.location.hostname}:3001`);
 
     const url = serverUrl || defaultUrl;
     this.socket = io(url, {
+
       reconnectionAttempts: 5,
       reconnectionDelay: 1000
     });

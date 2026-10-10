@@ -16,6 +16,9 @@ export default function App() {
     syncStats,
     buffering,
     bufferProgress,
+    isUploading,
+    uploadProgress,
+    uploadStats,
     driftCompensation,
     currentDspProfile,
     testPingActive,
@@ -24,6 +27,7 @@ export default function App() {
     unlockAudio,
     createRoom,
     joinRoom,
+    leaveRoom,
     uploadAndSelectTrack,
     startPlayback,
     pausePlayback,
@@ -35,7 +39,8 @@ export default function App() {
     addTrackToQueue,
     removeTrackFromQueue,
     advanceQueueNext,
-    voteToSkip
+    voteToSkip,
+    playLocalTestTone
   } = useSyncCast();
 
   // Prevent mobile device screen from sleeping during audio session
@@ -48,6 +53,8 @@ export default function App() {
     if (roomParam && !room && connected) {
       const defaultDeviceName = /iPhone|iPad|iPod/.test(navigator.userAgent) ? 'iPhone Node' : 'Phone Node';
       joinRoom(roomParam, defaultDeviceName);
+      // Remove query param from browser URL so user does not get re-trapped in the room on exit
+      window.history.replaceState({}, '', window.location.pathname);
     }
   }, [connected, room, joinRoom]);
 
@@ -57,7 +64,30 @@ export default function App() {
         connected={connected}
         roomCode={room?.code}
         deviceCount={room?.devices?.length || 0}
+        onLeaveRoom={leaveRoom}
       />
+
+      {/* Global Error Banner */}
+      {error && (
+        <div
+          style={{
+            margin: '0 16px 14px',
+            padding: '10px 16px',
+            border: '1px solid #f43f5e',
+            background: 'rgba(244, 63, 94, 0.12)',
+            color: '#fda4af',
+            fontFamily: 'var(--font-mono)',
+            fontSize: '0.8rem',
+            borderRadius: '6px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px'
+          }}
+        >
+          <div className="led-diode led-rose" />
+          <span>[AUDIO ENGINE ERROR] {error}</span>
+        </div>
+      )}
 
       {/* Host Migration Alert Banner (Phase 4.2) */}
       {hostMigrationNotice && (
@@ -84,6 +114,7 @@ export default function App() {
       <AudioUnlockBanner
         isUnlocked={isAudioUnlocked}
         onUnlock={unlockAudio}
+        onTestSound={playLocalTestTone}
       />
 
       <main style={{ flex: 1 }}>
@@ -103,11 +134,19 @@ export default function App() {
             onAssignChannel={assignChannel}
             onUpdatePosition={updateStagePosition}
             onTestPing={testChannelPing}
+            isUploading={isUploading}
+            uploadProgress={uploadProgress}
+            uploadStats={uploadStats}
+            bufferProgress={bufferProgress}
             onSetDspProfile={setDspProfile}
             onAddTrack={addTrackToQueue}
             onRemoveTrack={removeTrackFromQueue}
             onNextTrack={advanceQueueNext}
             onVoteSkip={voteToSkip}
+            onTestLocalSound={playLocalTestTone}
+            isAudioUnlocked={isAudioUnlocked}
+            onUnlockAudio={unlockAudio}
+            onLeaveRoom={leaveRoom}
           />
         ) : (
           <GuestView
@@ -122,6 +161,10 @@ export default function App() {
             testPingActive={testPingActive}
             onAddTrack={addTrackToQueue}
             onVoteSkip={voteToSkip}
+            onTestLocalSound={playLocalTestTone}
+            isAudioUnlocked={isAudioUnlocked}
+            onUnlockAudio={unlockAudio}
+            onLeaveRoom={leaveRoom}
           />
         )}
       </main>

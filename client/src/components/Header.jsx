@@ -1,9 +1,9 @@
 import React from 'react';
-import { Radio, Wifi, WifiOff, Users, Activity } from 'lucide-react';
+import { Radio, Wifi, WifiOff, Users, Activity, LogOut } from 'lucide-react';
 
-export function Header({ connected, roomCode, deviceCount }) {
+export function Header({ connected, roomCode, deviceCount, onLeaveRoom }) {
   return (
-    <header className="chassis-panel" style={{ margin: '14px 16px 20px', padding: '12px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+    <header className="chassis-panel" style={{ margin: '14px 16px 20px', padding: '12px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: 'linear-gradient(135deg, #18202f 0%, #0c0f14 100%)', border: '1px solid #38bdf8', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 10px rgba(56, 189, 248, 0.25)' }}>
           <Radio size={18} color="#38bdf8" />
@@ -23,7 +23,7 @@ export function Header({ connected, roomCode, deviceCount }) {
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
         {roomCode && (
           <div className="chassis-recessed" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px' }}>
             <span className="tech-label" style={{ color: '#38bdf8' }}>CH</span>
@@ -36,6 +36,27 @@ export function Header({ connected, roomCode, deviceCount }) {
               </span>
             )}
           </div>
+        )}
+
+        {roomCode && onLeaveRoom && (
+          <button
+            type="button"
+            onClick={onLeaveRoom}
+            className="btn-hardware-secondary"
+            style={{
+              padding: '6px 12px',
+              fontSize: '0.72rem',
+              color: '#fda4af',
+              borderColor: 'rgba(244, 63, 94, 0.35)',
+              background: 'rgba(244, 63, 94, 0.08)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+            title="Disconnect and leave this room"
+          >
+            <LogOut size={13} color="#f43f5e" /> EXIT ROOM
+          </button>
         )}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>

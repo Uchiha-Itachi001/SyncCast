@@ -1,8 +1,9 @@
-const SERVER_URL = import.meta.env.PROD
+const SERVER_URL = import.meta.env.VITE_SERVER_URL || (import.meta.env.PROD
   ? window.location.origin
-  : (import.meta.env.VITE_SERVER_URL || `http://${window.location.hostname}:3001`);
+  : `http://${window.location.hostname}:3001`);
 
 export const apiService = {
+
 
   async getNetworkInfo() {
     const res = await fetch(`${SERVER_URL}/api/rooms/network`);
@@ -10,21 +11,50 @@ export const apiService = {
     return res.json();
   },
 
-  async uploadAudio(file) {
-    const formData = new FormData();
-    formData.append('audio', file);
+  uploadAudio(file, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      const formData = new FormData();
+      formData.append('audio', file);
 
-    const res = await fetch(`${SERVER_URL}/api/audio/upload`, {
-      method: 'POST',
-      body: formData
+      xhr.open('POST', `${SERVER_URL}/api/audio/upload`);
+
+      if (xhr.upload && onProgress) {
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percent = Math.round((event.loaded / event.total) * 100);
+            onProgress({
+              percent,
+              loaded: event.loaded,
+              total: event.total,
+              filename: file.name
+            });
+          }
+        };
+      }
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const data = JSON.parse(xhr.responseText);
+            resolve({
+              ...data,
+              url: `${SERVER_URL}${data.url}`
+            });
+          } catch (e) {
+            reject(new Error('Invalid JSON response from audio upload'));
+          }
+        } else {
+          reject(new Error(`Failed to upload audio file (${xhr.status}): ${xhr.statusText || 'Server Error'}`));
+        }
+      };
+
+      xhr.onerror = () => {
+        reject(new Error('Network error during audio upload'));
+      };
+
+      xhr.send(formData);
     });
-
-    if (!res.ok) throw new Error('Failed to upload audio file');
-    const data = await res.json();
-    return {
-      ...data,
-      url: `${SERVER_URL}${data.url}`
-    };
   },
 
   createUrlTrack(directUrl, title) {

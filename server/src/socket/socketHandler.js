@@ -55,6 +55,34 @@ export function setupSocketHandlers(io) {
       }
     });
 
+    // 4b. Explicit Room Exit / Leave
+    socket.on(SOCKET_EVENTS.ROOM_LEAVE, () => {
+      const room = roomService.getRoomBySocketId(socket.id);
+      if (room) {
+        const roomCode = room.code;
+        const result = roomService.leaveRoom(socket.id);
+        socket.leave(roomCode);
+        if (result) {
+          if (result.destroyed) {
+            io.to(roomCode).emit(SOCKET_EVENTS.ROOM_ERROR, { message: 'Room closed.' });
+          } else if (result.room) {
+            if (result.migratedHost) {
+              io.to(roomCode).emit(SOCKET_EVENTS.HOST_MIGRATED, {
+                newHostSocketId: result.migratedHost.id,
+                newHostName: result.migratedHost.name,
+                room: result.room.toJSON()
+              });
+            }
+            io.to(roomCode).emit(SOCKET_EVENTS.ROOM_USER_LEFT, {
+              socketId: socket.id,
+              room: result.room.toJSON()
+            });
+            io.to(roomCode).emit(SOCKET_EVENTS.ROOM_UPDATE, result.room.toJSON());
+          }
+        }
+      }
+    });
+
     // 5. Track selection (Host)
     socket.on(SOCKET_EVENTS.TRACK_SELECT, (trackData) => {
       const room = roomService.getRoomBySocketId(socket.id);
