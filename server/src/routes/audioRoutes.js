@@ -12,6 +12,7 @@ import {
   ALLOWED_AUDIO_MIMES
 } from '../utils/security.js';
 import { createRateLimiter } from '../middleware/rateLimiter.js';
+import { getYtDlpPath, getFfmpegPath } from '../utils/binaries.js';
 
 const execFilePromise = util.promisify(execFile);
 const router = express.Router();
@@ -180,13 +181,16 @@ router.post('/youtube', youtubeLimiter, async (req, res) => {
       message: 'Step 1/3: Resolving video stream metadata from YouTube...'
     });
 
-    // Step 1: Extract video metadata
-    const { stdout: metaJson } = await execFilePromise('yt-dlp', [
+    // Step 1: Resolve binary path (system PATH or auto-downloaded server/bin/)
+    const ytDlpBinary = await getYtDlpPath();
+    const ffmpegBinary = getFfmpegPath();
+
+    const { stdout: metaJson } = await execFilePromise(ytDlpBinary, [
       '--dump-json',
       '--no-warnings',
       '--no-playlist',
       trimmedUrl
-    ], { timeout: 20000 });
+    ], { timeout: 25000 });
 
     const meta = JSON.parse(metaJson);
     const title = meta.title || 'YouTube Audio';
@@ -203,8 +207,6 @@ router.post('/youtube', youtubeLimiter, async (req, res) => {
     const rawVideoId = meta.id || `${Date.now()}`;
     const safeVideoId = rawVideoId.replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 32);
     const uniqueTimestamp = Date.now();
-    const finalFilename = `yt-${safeVideoId}-${uniqueTimestamp}.mp3`;
-    const finalFilePath = path.join(CONFIG.AUDIO_UPLOAD_DIR, finalFilename);
     const outTemplate = path.join(CONFIG.AUDIO_UPLOAD_DIR, `yt-${safeVideoId}-${uniqueTimestamp}.%(ext)s`);
 
     console.log(`[SyncCast YouTube] Spawning streaming download for: ${title}`);
@@ -220,17 +222,23 @@ router.post('/youtube', youtubeLimiter, async (req, res) => {
       message: `Step 2/3: Downloading stream for "${title.slice(0, 35)}..."`
     });
 
-    // Step 2: Spawn yt-dlp to stream line-by-line download telemetry
+    // Step 2: Build yt-dlp arguments (use ffmpeg for mp3 if present, or best audio directly)
+    const ytArgs = [
+      '--no-playlist',
+      '--max-filesize', '50M',
+      '--newline',
+      '-o', outTemplate
+    ];
+
+    if (ffmpegBinary) {
+      ytArgs.push('-x', '--audio-format', 'mp3', '--ffmpeg-location', ffmpegBinary);
+    } else {
+      ytArgs.push('-f', 'bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio/best');
+    }
+    ytArgs.push(trimmedUrl);
+
     await new Promise((resolve, reject) => {
-      const child = spawn('yt-dlp', [
-        '--no-playlist',
-        '-x',
-        '--audio-format', 'mp3',
-        '--max-filesize', '50M',
-        '--newline',
-        '-o', outTemplate,
-        trimmedUrl
-      ]);
+      const child = spawn(ytDlpBinary, ytArgs);
 
       child.stdout.on('data', (chunk) => {
         const text = chunk.toString();
@@ -283,24 +291,32 @@ router.post('/youtube', youtubeLimiter, async (req, res) => {
       });
     });
 
-    if (!fs.existsSync(finalFilePath)) {
+    // Locate the exact file that was written to disk
+    const allFiles = fs.readdirSync(CONFIG.AUDIO_UPLOAD_DIR);
+    const matchedFile = allFiles.find(f => f.startsWith(`yt-${safeVideoId}-${uniqueTimestamp}`));
+    if (!matchedFile) {
       throw new Error('Downloaded audio file not found on disk');
     }
 
+    const finalFilename = matchedFile;
+    const finalFilePath = path.join(CONFIG.AUDIO_UPLOAD_DIR, finalFilename);
     const stats = fs.statSync(finalFilePath);
+    const ext = path.extname(finalFilename).toLowerCase();
+    const mimeType = ext === '.mp3' ? 'audio/mpeg' : ext === '.m4a' || ext === '.aac' ? 'audio/mp4' : ext === '.webm' || ext === '.opus' ? 'audio/webm' : 'audio/mpeg';
+
     const trackInfo = {
       id: `yt-${safeVideoId}`,
       originalName: `${title} - ${author}`.slice(0, 100),
       filename: finalFilename,
       size: stats.size,
       url: `/api/audio/stream/${finalFilename}`,
-      mimeType: 'audio/mpeg',
+      mimeType,
       duration,
       source: 'youtube',
       artist: author.slice(0, 60)
     };
 
-    console.log(`[SyncCast YouTube] Extraction successful: ${trackInfo.originalName} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
+    console.log(`[SyncCast YouTube] Extraction successful: ${trackInfo.originalName} (${(stats.size / 1024 / 1024).toFixed(2)} MB, format: ${ext})`);
     res.status(201).json(trackInfo);
   } catch (err) {
     console.error('[SyncCast YouTube] Extraction error:', err.message);

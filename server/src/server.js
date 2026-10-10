@@ -11,6 +11,7 @@ import { setupSocketHandlers } from './socket/socketHandler.js';
 import { audioRouter } from './routes/audioRoutes.js';
 import { roomRouter } from './routes/roomRoutes.js';
 import { createRateLimiter } from './middleware/rateLimiter.js';
+import { ensureBinaries } from './utils/binaries.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -101,11 +102,13 @@ server.on('error', (err) => {
   }
 });
 
-// Start server listening on all network interfaces (0.0.0.0)
-server.listen(CONFIG.PORT, '0.0.0.0', () => {
-  const localIp = getLocalIpAddress();
-  console.log(`[SyncCast] Server running:`);
-  console.log(` - Local:    http://localhost:${CONFIG.PORT}`);
-  console.log(` - LAN / WiFi: http://${localIp}:${CONFIG.PORT}`);
-  console.log(` - Client:   http://${localIp}:${CONFIG.CLIENT_PORT}`);
+// Verify binaries and start server listening on all network interfaces (0.0.0.0)
+ensureBinaries().finally(() => {
+  server.listen(CONFIG.PORT, '0.0.0.0', () => {
+    const localIp = getLocalIpAddress();
+    console.log(`[SyncCast] Server running:`);
+    console.log(` - Local:    http://localhost:${CONFIG.PORT}`);
+    console.log(` - LAN / WiFi: http://${localIp}:${CONFIG.PORT}`);
+    console.log(` - Client:   http://${localIp}:${CONFIG.CLIENT_PORT}`);
+  });
 });
