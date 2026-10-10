@@ -1,14 +1,10 @@
 # Production Multi-Stage Dockerfile for SyncCast on Render / Cloud
 FROM node:20-bookworm-slim AS base
 
-# Install ffmpeg, python3, and curl for audio extraction
+# Install ffmpeg and ca-certificates for audio processing
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
-    python3 \
-    curl \
     ca-certificates \
-    && curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
-    && chmod a+rx /usr/local/bin/yt-dlp \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

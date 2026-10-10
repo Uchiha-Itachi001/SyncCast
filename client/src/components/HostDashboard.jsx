@@ -1,41 +1,24 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   Play,
   Pause,
   Upload,
   Music,
-  Disc,
   Copy,
   Check,
   Radio,
-  Cpu,
   LogOut,
   SkipBack,
   SkipForward,
   RotateCcw,
   RotateCw,
-  Sliders,
   ShieldCheck,
-  Sparkles,
-  Volume2,
-  ArrowLeft,
-  Key,
-  HelpCircle
+  ArrowLeft
 } from 'lucide-react';
 import { SpatialStage } from './SpatialStage.jsx';
 import { ChannelStrip } from './ChannelStrip.jsx';
 import { PlaylistQueue } from './PlaylistQueue.jsx';
-import { apiService } from '../services/apiService.js';
-
-function YoutubeIcon({ size = 20, color = 'currentColor' }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M2.5 17a24.12 24.12 0 0 1 0-10 2 2 0 0 1 1.4-1.4 49.56 49.56 0 0 1 16.2 0A2 2 0 0 1 21.5 7a24.12 24.12 0 0 1 0 10 2 2 0 0 1-1.4 1.4 49.55 49.55 0 0 1-16.2 0A2 2 0 0 1 2.5 17" />
-      <polygon points="10 15 15 12 10 9 10 15" fill={color} />
-    </svg>
-  );
-}
 
 function formatTime(seconds) {
   if (!seconds || isNaN(seconds)) return '00:00';
@@ -51,10 +34,7 @@ export function HostDashboard({
   isUploading = false,
   uploadProgress = 0,
   uploadStats = { loaded: 0, total: 0, filename: '' },
-  isExtractingYt = false,
-  ytProgress = { percent: 0, downloadPercent: 0, total: '', speed: '', eta: '', step: 'idle', message: '' },
   onUploadTrack,
-  onExtractYtTrack,
   onStartPlayback,
   onPausePlayback,
   onSeekPlayback,
@@ -76,52 +56,10 @@ export function HostDashboard({
   onLeaveRoom
 }) {
   const [copied, setCopied] = useState(false);
-  const [activeInputTab, setActiveInputTab] = useState('upload'); // 'upload' | 'youtube'
-  const [youtubeUrlInput, setYoutubeUrlInput] = useState('');
   const [isReplacing, setIsReplacing] = useState(false);
   const [isSeeking, setIsSeeking] = useState(false);
   const [localSeekPos, setLocalSeekPos] = useState(0);
-
-  // Cloud YouTube Authentication (Render / Datacenter cookies)
-  const [cookieStatus, setCookieStatus] = useState(null);
-  const [showCookieDrawer, setShowCookieDrawer] = useState(false);
-  const [cookieInput, setCookieInput] = useState('');
-  const [savingCookies, setSavingCookies] = useState(false);
-  const [cookieFeedback, setCookieFeedback] = useState(null);
-
-  useEffect(() => {
-    apiService.getCookieStatus()
-      .then((st) => setCookieStatus(st))
-      .catch(() => {});
-  }, []);
-
-  const handleSaveCookies = async () => {
-    if (!cookieInput.trim()) return;
-    setSavingCookies(true);
-    setCookieFeedback(null);
-    try {
-      await apiService.uploadCookies(cookieInput.trim());
-      setCookieStatus({ configured: true, source: 'file' });
-      setCookieFeedback({ type: 'success', text: 'Cookies saved to server! YouTube cloud extraction ready.' });
-      setCookieInput('');
-      setTimeout(() => setShowCookieDrawer(false), 2000);
-    } catch (err) {
-      setCookieFeedback({ type: 'error', text: err.message });
-    } finally {
-      setSavingCookies(false);
-    }
-  };
-
-  const handleCookieFile = (e) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        setCookieInput(event.target?.result || '');
-      };
-      reader.readAsText(file);
-    }
-  };
+  const [isDragging, setIsDragging] = useState(false);
 
   const joinUrl = `${window.location.origin}?room=${room.code}`;
 
@@ -152,14 +90,14 @@ export function HostDashboard({
     }
   };
 
-  const handleYoutubeSubmit = async (e) => {
+  const handleDrop = (e) => {
     e.preventDefault();
-    if (!youtubeUrlInput || !youtubeUrlInput.trim()) return;
-    try {
-      await onExtractYtTrack(youtubeUrlInput.trim());
-      setYoutubeUrlInput('');
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file && file.type.startsWith('audio/')) {
+      onUploadTrack(file);
       setIsReplacing(false);
-    } catch (_) {}
+    }
   };
 
   const isPlaying = room.playbackState?.status === 'playing' || room.playbackState?.status === 'scheduled';
@@ -283,66 +221,8 @@ export function HostDashboard({
           </div>
         )}
 
-        {/* Live YouTube Extractor Banner with Real-Time Telemetry */}
-        {isExtractingYt && (
-          <div
-            className="chassis-recessed"
-            style={{
-              padding: '18px 20px',
-              marginBottom: '20px',
-              border: '1px solid #ef4444',
-              background: 'rgba(239, 68, 68, 0.08)'
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div className="led-diode led-rose" />
-                <span className="tech-label" style={{ color: '#ef4444', fontWeight: 800 }}>
-                  YOUTUBE AUDIO BACKEND EXTRACTOR // {ytProgress.step ? ytProgress.step.toUpperCase() : 'PROCESSING'}
-                </span>
-              </div>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: '#ef4444', fontWeight: 800 }}>
-                {ytProgress.downloadPercent ? `${ytProgress.downloadPercent.toFixed(1)}%` : `${ytProgress.percent || 10}%`}
-              </span>
-            </div>
-
-            {/* Live Progress Bar with real responsive width */}
-            <div style={{ height: '8px', background: 'rgba(255, 255, 255, 0.08)', borderRadius: '4px', overflow: 'hidden', marginBottom: '12px' }}>
-              <div
-                style={{
-                  width: `${Math.min(100, Math.max(5, ytProgress.percent || 10))}%`,
-                  height: '100%',
-                  background: 'linear-gradient(90deg, #ef4444 0%, #f97316 100%)',
-                  boxShadow: '0 0 12px rgba(239, 68, 68, 0.6)',
-                  transition: 'width 0.25s ease-out'
-                }}
-              />
-            </div>
-
-            {/* Live Telemetry: Total Size, Download Speed, Remaining ETA */}
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', fontSize: '0.74rem', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', marginBottom: '6px' }}>
-              <div>
-                <span style={{ color: 'var(--text-dim)' }}>TOTAL SIZE: </span>
-                <span style={{ color: '#fff', fontWeight: 700 }}>{ytProgress.total || 'CALCULATING...'}</span>
-              </div>
-              <div>
-                <span style={{ color: 'var(--text-dim)' }}>SPEED: </span>
-                <span style={{ color: '#f59e0b', fontWeight: 700 }}>{ytProgress.speed || 'STREAMING'}</span>
-              </div>
-              <div>
-                <span style={{ color: 'var(--text-dim)' }}>EST. REMAINING: </span>
-                <span style={{ color: '#10b981', fontWeight: 700 }}>{ytProgress.eta ? `${ytProgress.eta} REMAINING` : 'CALCULATING...'}</span>
-              </div>
-            </div>
-
-            <div style={{ fontSize: '0.72rem', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
-              {ytProgress.message || 'Extracting high-quality audio stream via backend...'}
-            </div>
-          </div>
-        )}
-
         {/* Live Pre-Buffering Progress Card */}
-        {!isUploading && !isExtractingYt && buffering && (
+        {!isUploading && buffering && (
           <div
             className="chassis-recessed"
             style={{
@@ -377,7 +257,7 @@ export function HostDashboard({
           </div>
         )}
 
-        {/* Comprehensive Hardware Media Player Controller (Requirement 3) */}
+        {/* Comprehensive Hardware Media Player Controller */}
         {room.currentTrack && !isReplacing ? (
           <div
             className="chassis-recessed"
@@ -396,25 +276,21 @@ export function HostDashboard({
                     width: '46px',
                     height: '46px',
                     borderRadius: '8px',
-                    background: room.currentTrack.source === 'youtube' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(56, 189, 248, 0.15)',
-                    border: `1px solid ${room.currentTrack.source === 'youtube' ? '#ef4444' : '#38bdf8'}`,
+                    background: 'rgba(56, 189, 248, 0.15)',
+                    border: '1px solid #38bdf8',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center'
                   }}
                 >
-                  {room.currentTrack.source === 'youtube' ? (
-                    <YoutubeIcon size={24} color="#ef4444" />
-                  ) : (
-                    <Music size={24} color="#38bdf8" />
-                  )}
+                  <Music size={24} color="#38bdf8" />
                 </div>
                 <div>
                   <div style={{ fontWeight: 800, fontSize: '1.05rem', color: '#fff', letterSpacing: '-0.01em' }}>
                     {room.currentTrack.originalName || room.currentTrack.filename}
                   </div>
                   <div style={{ fontSize: '0.72rem', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', marginTop: '2px' }}>
-                    SOURCE: {room.currentTrack.source === 'youtube' ? 'YOUTUBE EXTRACT' : 'LOCAL MASTER'} &bull; FORMAT: {(room.currentTrack.mimeType || 'AUDIO/MP4').toUpperCase()}
+                    SOURCE: {room.currentTrack.isStream ? 'URL STREAM' : 'LOCAL MASTER'} &bull; FORMAT: {(room.currentTrack.mimeType || 'AUDIO/MPEG').toUpperCase()}
                   </div>
                 </div>
               </div>
@@ -448,6 +324,7 @@ export function HostDashboard({
                     : '--:--'}
                 </span>
               </div>
+
               <input
                 type="range"
                 min="0"
@@ -568,7 +445,7 @@ export function HostDashboard({
                 </button>
               </div>
 
-              {/* Host Room-Wide DSP Selector (Requirement 2) */}
+              {/* Host Room-Wide DSP Selector */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <span className="tech-label" style={{ display: 'flex', alignItems: 'center', gap: '4px', marginRight: '4px' }}>
                   <ShieldCheck size={12} color="#10b981" /> ROOM DSP:
@@ -608,14 +485,29 @@ export function HostDashboard({
             </div>
           </div>
         ) : (
-          /* Dual-Tab Audio Loader: File Upload + YouTube Extractor (Requirement 4) */
-          !isUploading && !isExtractingYt && (
-            <div className="chassis-recessed" style={{ padding: '24px 20px', marginBottom: '20px', border: '1px dashed var(--border-hardware)' }}>
-              {/* Return to Active Controller Banner */}
+          /* Streamlined Dedicated Local Audio Master Upload Bay */
+          !isUploading && (
+            <div
+              className="chassis-recessed"
+              onDragOver={(e) => {
+                e.preventDefault();
+                setIsDragging(true);
+              }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={handleDrop}
+              style={{
+                padding: '32px 24px',
+                marginBottom: '20px',
+                border: isDragging ? '2px dashed #38bdf8' : '1px dashed var(--border-hardware)',
+                background: isDragging ? 'rgba(56, 189, 248, 0.08)' : 'rgba(0, 0, 0, 0.25)',
+                transition: 'border-color 0.2s ease, background 0.2s ease'
+              }}
+            >
+              {/* Return to Active Controller Banner if track exists */}
               {room.currentTrack && (
                 <div
                   style={{
-                    marginBottom: '18px',
+                    marginBottom: '22px',
                     display: 'flex',
                     flexWrap: 'wrap',
                     alignItems: 'center',
@@ -651,202 +543,68 @@ export function HostDashboard({
                 </div>
               )}
 
-              {/* Tabs */}
-              <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginBottom: '20px' }}>
-                <button
-                  type="button"
-                  onClick={() => setActiveInputTab('upload')}
-                  className={activeInputTab === 'upload' ? 'btn-hardware-primary' : 'btn-hardware-secondary'}
-                  style={{ padding: '8px 16px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '6px' }}
-                >
-                  <Upload size={14} /> 📁 LOCAL AUDIO FILE
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveInputTab('youtube')}
-                  className={activeInputTab === 'youtube' ? 'btn-hardware-primary' : 'btn-hardware-secondary'}
+              <div style={{ textAlign: 'center', maxWidth: '480px', margin: '0 auto' }}>
+                <div
                   style={{
-                    padding: '8px 16px',
-                    fontSize: '0.75rem',
+                    width: '64px',
+                    height: '64px',
+                    borderRadius: '50%',
+                    background: 'rgba(56, 189, 248, 0.1)',
+                    border: '1px solid rgba(56, 189, 248, 0.3)',
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '6px',
-                    borderColor: activeInputTab === 'youtube' ? '#ef4444' : undefined,
-                    background: activeInputTab === 'youtube' ? '#ef4444' : undefined
+                    justifyContent: 'center',
+                    margin: '0 auto 16px'
                   }}
                 >
-                  <YoutubeIcon size={15} color="#fff" /> 📺 YOUTUBE EXTRACTOR
-                </button>
-              </div>
+                  <Upload size={30} color="#38bdf8" />
+                </div>
 
-              {activeInputTab === 'upload' ? (
-                <div style={{ textAlign: 'center' }}>
-                  <Upload size={32} color="var(--text-muted)" style={{ margin: '0 auto 10px' }} />
-                  <div style={{ fontWeight: 700, fontSize: '0.95rem', marginBottom: '4px' }}>
-                    SELECT LOCAL AUDIO MASTER
-                  </div>
-                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '16px', maxWidth: '420px', margin: '0 auto 16px' }}>
-                    Choose an MP3, WAV, or AAC file from your laptop or phone. Uploaded with live progress tracking and synchronized bit-for-bit to all connected devices.
-                  </p>
-                  <label className="btn-hardware-primary" style={{ cursor: 'pointer', display: 'inline-flex' }}>
+                <h3 style={{ fontWeight: 800, fontSize: '1.15rem', marginBottom: '6px', letterSpacing: '-0.01em' }}>
+                  UPLOAD AUDIO MASTER
+                </h3>
+                <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '22px', lineHeight: 1.6 }}>
+                  Select an MP3, WAV, AAC, FLAC, or OGG file from your device, or drag and drop it here. Transmitted bit-for-bit to all speaker nodes with sample-accurate clock sync.
+                </p>
+
+                <div style={{ display: 'flex', justifyContent: 'center', gap: '10px' }}>
+                  <label
+                    className="btn-hardware-primary"
+                    style={{
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '10px 22px',
+                      fontSize: '0.82rem',
+                      boxShadow: '0 0 15px rgba(56, 189, 248, 0.4)'
+                    }}
+                  >
                     <input
                       type="file"
-                      accept="audio/*"
+                      accept="audio/*,.mp3,.wav,.aac,.flac,.ogg,.m4a"
                       onChange={handleFileChange}
                       style={{ display: 'none' }}
                     />
-                    SELECT AUDIO FILE
+                    <Upload size={16} /> CHOOSE AUDIO FILE
                   </label>
-                </div>
-              ) : (
-                <form onSubmit={handleYoutubeSubmit} style={{ maxWidth: '540px', margin: '0 auto', textAlign: 'center' }}>
-                  <YoutubeIcon size={34} color="#ef4444" style={{ margin: '0 auto 10px' }} />
-                  <div style={{ fontWeight: 700, fontSize: '0.95rem', marginBottom: '4px' }}>
-                    YOUTUBE BACKEND AUDIO EXTRACTOR
-                  </div>
-                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '16px' }}>
-                    Paste any YouTube song or video URL. Our backend extracts the highest quality audio stream and distributes it to all speaker nodes simultaneously.
-                  </p>
-                  <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
-                    <input
-                      type="text"
-                      className="terminal-input"
-                      value={youtubeUrlInput}
-                      onChange={(e) => setYoutubeUrlInput(e.target.value)}
-                      placeholder="https://www.youtube.com/watch?v=... or https://youtu.be/..."
-                      style={{ flex: 1, padding: '10px 14px', fontSize: '0.8rem' }}
-                    />
+
+                  {room.currentTrack && (
                     <button
-                      type="submit"
-                      disabled={!youtubeUrlInput.trim() || isExtractingYt}
-                      className="btn-hardware-primary"
-                      style={{
-                        padding: '10px 18px',
-                        background: '#ef4444',
-                        borderColor: '#ef4444',
-                        opacity: !youtubeUrlInput.trim() || isExtractingYt ? 0.5 : 1
-                      }}
+                      type="button"
+                      onClick={() => setIsReplacing(false)}
+                      className="btn-hardware-secondary"
+                      style={{ padding: '10px 16px', fontSize: '0.78rem' }}
                     >
-                      EXTRACT &amp; SYNC
+                      CANCEL
                     </button>
-                  </div>
-                  <div style={{ fontSize: '0.68rem', fontFamily: 'var(--font-mono)', color: 'var(--text-dim)' }}>
-                    EXAMPLE: https://www.youtube.com/watch?v=dQw4w9WgXcQ
-                  </div>
-
-                  {/* Cloud/Render Cookie Configuration Strip */}
-                  <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.7rem' }}>
-                        <div className={`led-diode ${cookieStatus?.configured ? 'led-emerald' : 'led-amber'}`} />
-                        <span style={{ color: cookieStatus?.configured ? '#10b981' : 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                          {cookieStatus?.configured ? 'CLOUD AUTH ACTIVE (COOKIES LOADED)' : 'CLOUD RENDER AUTH: COOKIES NOT LOADED'}
-                        </span>
-                      </div>
-                      <div style={{ display: 'flex', gap: '8px' }}>
-                        <button
-                          type="button"
-                          onClick={() => setShowCookieDrawer(!showCookieDrawer)}
-                          className="btn-hardware-secondary"
-                          style={{ fontSize: '0.68rem', padding: '4px 8px' }}
-                        >
-                          <Key size={12} /> {showCookieDrawer ? 'HIDE CLOUD AUTH' : 'SETUP CLOUD COOKIES'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setActiveInputTab('upload')}
-                          className="btn-hardware-secondary"
-                          style={{ fontSize: '0.68rem', padding: '4px 8px', color: '#38bdf8' }}
-                        >
-                          <Upload size={12} /> UPLOAD FILE INSTEAD
-                        </button>
-                      </div>
-                    </div>
-
-                    {showCookieDrawer && (
-                      <div
-                        className="chassis-recessed"
-                        style={{
-                          marginTop: '12px',
-                          padding: '12px',
-                          textAlign: 'left',
-                          fontSize: '0.72rem'
-                        }}
-                      >
-                        <div style={{ fontWeight: 700, color: 'var(--text-main)', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <HelpCircle size={14} color="#f59e0b" />
-                          HOW TO RUN YOUTUBE ON RENDER / CLOUD HOSTS:
-                        </div>
-                        <p style={{ color: 'var(--text-dim)', margin: '0 0 10px', lineHeight: 1.4 }}>
-                          YouTube blocks datacenter IPs (like Render) unless you provide session cookies.
-                          Export your YouTube cookies using the browser extension <strong>&quot;Get cookies.txt LOCALLY&quot;</strong>, then paste or upload below.
-                        </p>
-
-                        <div style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
-                          <label
-                            className="btn-hardware-secondary"
-                            style={{ fontSize: '0.68rem', padding: '4px 10px', cursor: 'pointer' }}
-                          >
-                            UPLOAD COOKIES.TXT
-                            <input type="file" accept=".txt" onChange={handleCookieFile} style={{ display: 'none' }} />
-                          </label>
-                          <span style={{ color: 'var(--text-dim)', fontSize: '0.65rem' }}>OR PASTE NETSCAPE COOKIES BELOW:</span>
-                        </div>
-
-                        <textarea
-                          rows={3}
-                          className="terminal-input"
-                          value={cookieInput}
-                          onChange={(e) => setCookieInput(e.target.value)}
-                          placeholder="# Netscape HTTP Cookie File&#10;.youtube.com TRUE / FALSE 1791685065 SID ..."
-                          style={{ width: '100%', padding: '6px 8px', fontSize: '0.7rem', fontFamily: 'var(--font-mono)', marginBottom: '8px' }}
-                        />
-
-                        {cookieFeedback && (
-                          <div
-                            style={{
-                              padding: '6px 10px',
-                              borderRadius: '4px',
-                              marginBottom: '8px',
-                              fontSize: '0.7rem',
-                              fontFamily: 'var(--font-mono)',
-                              background: cookieFeedback.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                              color: cookieFeedback.type === 'success' ? '#10b981' : '#f87171'
-                            }}
-                          >
-                            {cookieFeedback.text}
-                          </div>
-                        )}
-
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-                          <button
-                            type="button"
-                            disabled={!cookieInput.trim() || savingCookies}
-                            onClick={handleSaveCookies}
-                            className="btn-hardware-primary"
-                            style={{ fontSize: '0.68rem', padding: '6px 14px' }}
-                          >
-                            {savingCookies ? 'SAVING...' : 'SAVE COOKIES TO CLOUD SERVER'}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </form>
-              )}
-
-              {room.currentTrack && (
-                <div style={{ textAlign: 'center', marginTop: '16px' }}>
-                  <button
-                    type="button"
-                    onClick={() => setIsReplacing(false)}
-                    className="btn-hardware-secondary"
-                    style={{ padding: '5px 12px', fontSize: '0.7rem' }}
-                  >
-                    CANCEL &bull; RETURN TO CURRENT TRACK
-                  </button>
+                  )}
                 </div>
-              )}
+
+                <div style={{ marginTop: '16px', fontSize: '0.68rem', fontFamily: 'var(--font-mono)', color: 'var(--text-dim)' }}>
+                  MAX FILE SIZE: 50MB &bull; LOSSLESS BITSTREAM PRESERVED
+                </div>
+              </div>
             </div>
           )
         )}

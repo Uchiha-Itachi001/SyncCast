@@ -2,9 +2,8 @@ import express from 'express';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 import { fileURLToPath } from 'url';
-import { spawn, execFile } from 'child_process';
+import { execFile } from 'child_process';
 import util from 'util';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -17,7 +16,6 @@ import {
   ALLOWED_AUDIO_MIMES
 } from '../utils/security.js';
 import { createRateLimiter } from '../middleware/rateLimiter.js';
-import { getYtDlpPath, getFfmpegPath, getYtDlpBypassArgs } from '../utils/binaries.js';
 
 const execFilePromise = util.promisify(execFile);
 const router = express.Router();
@@ -32,12 +30,6 @@ const uploadLimiter = createRateLimiter({
   windowMs: 60 * 1000,
   maxRequests: 20,
   message: 'Upload rate limit reached. Please wait before uploading more files.'
-});
-
-const youtubeLimiter = createRateLimiter({
-  windowMs: 60 * 1000,
-  maxRequests: 10,
-  message: 'YouTube extractor rate limit reached. Please wait a minute.'
 });
 
 const proxyLimiter = createRateLimiter({
@@ -120,11 +112,6 @@ function handleUploadMiddleware(req, res, next) {
   });
 }
 
-function isYouTubeUrl(url) {
-  if (!url || typeof url !== 'string') return false;
-  return /^(https?:\/\/)?(www\.|m\.)?(youtube\.com|youtu\.be)\/.+$/i.test(url.trim());
-}
-
 // 1. Upload endpoint (Rate-limited, validated, with exact ffprobe duration detection)
 router.post('/upload', uploadLimiter, handleUploadMiddleware, async (req, res) => {
   if (!req.file) {
@@ -157,224 +144,7 @@ router.post('/upload', uploadLimiter, handleUploadMiddleware, async (req, res) =
   res.status(201).json(trackInfo);
 });
 
-// 2. YouTube audio extraction endpoint (Real-time download telemetry over Socket.io)
-router.post('/youtube', youtubeLimiter, async (req, res) => {
-  const { url, socketId } = req.body;
-  if (!url || typeof url !== 'string') {
-    return res.status(400).json({ error: 'Missing YouTube URL' });
-  }
 
-  const trimmedUrl = url.trim();
-  if (!isYouTubeUrl(trimmedUrl)) {
-    return res.status(400).json({
-      error: 'Invalid YouTube URL. Please provide a standard link (e.g., https://www.youtube.com/watch?v=... or https://youtu.be/...)'
-    });
-  }
-
-  const io = req.app.get('io');
-  const emitProgress = (payload) => {
-    if (io && socketId) {
-      io.to(socketId).emit('youtube:progress', payload);
-    }
-  };
-
-  try {
-    console.log(`[SyncCast YouTube] Extracting info for URL: ${trimmedUrl}`);
-    emitProgress({
-      percent: 10,
-      step: 'metadata',
-      message: 'Step 1/3: Resolving video stream metadata from YouTube...'
-    });
-
-    // Step 1: Resolve binary path (system PATH or auto-downloaded server/bin/)
-    const ytDlpBinary = await getYtDlpPath();
-    const ffmpegBinary = getFfmpegPath();
-
-    // Resilient metadata resolution with mobile/embedded client profiles (completely avoids blocked desktop web player)
-    const clientProfiles = [
-      'youtube:player_client=android_embedded',
-      'youtube:player_client=android_music',
-      'youtube:player_client=android_creator',
-      'youtube:player_client=android',
-      'youtube:player_client=tv'
-    ];
-
-    let meta = null;
-    let winningClient = 'youtube:player_client=android_embedded';
-    let lastMetaError = null;
-
-    for (const clientProfile of clientProfiles) {
-      try {
-        const bypassArgs = getYtDlpBypassArgs();
-        const args = [
-          '--dump-json',
-          '--no-playlist',
-          '--extractor-args', clientProfile,
-          ...bypassArgs,
-          trimmedUrl
-        ];
-        const { stdout: metaJson } = await execFilePromise(ytDlpBinary, args, { timeout: 25000 });
-        meta = JSON.parse(metaJson);
-        winningClient = clientProfile;
-        break;
-      } catch (err) {
-        lastMetaError = err;
-        console.warn(`[SyncCast YouTube] Metadata profile (${clientProfile}) failed: ${err.message}. Retrying fallback client...`);
-      }
-    }
-
-    if (!meta) {
-      throw lastMetaError || new Error('Failed to resolve video stream metadata from YouTube');
-    }
-
-    const title = meta.title || 'YouTube Audio';
-    const author = meta.uploader || meta.channel || 'YouTube Creator';
-    const duration = parseInt(meta.duration, 10) || 0;
-
-    // Security DoS defense: Block overly long videos (> 30 mins)
-    if (duration > 1800) {
-      return res.status(400).json({
-        error: 'Video duration exceeds 30 minutes. Please select a shorter song to conserve server resources.'
-      });
-    }
-
-    const rawVideoId = meta.id || `${Date.now()}`;
-    const safeVideoId = rawVideoId.replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 32);
-    const uniqueTimestamp = Date.now();
-    const outTemplate = path.join(CONFIG.AUDIO_UPLOAD_DIR, `yt-${safeVideoId}-${uniqueTimestamp}.%(ext)s`);
-
-    console.log(`[SyncCast YouTube] Spawning streaming download for: ${title}`);
-    emitProgress({
-      percent: 25,
-      step: 'downloading',
-      title,
-      author,
-      duration,
-      total: '',
-      speed: '',
-      eta: '',
-      message: `Step 2/3: Downloading stream for "${title.slice(0, 35)}..."`
-    });
-
-    // Step 2: Build yt-dlp arguments with datacenter bot bypass and fallback formats
-    const ytArgs = [
-      '--no-playlist',
-      '--max-filesize', '50M',
-      '--newline',
-      '-o', outTemplate,
-      '--extractor-args', winningClient,
-      ...getYtDlpBypassArgs()
-    ];
-
-    if (ffmpegBinary) {
-      ytArgs.push('-x', '--audio-format', 'mp3');
-      if (path.isAbsolute(ffmpegBinary)) {
-        ytArgs.push('--ffmpeg-location', ffmpegBinary);
-      }
-    } else {
-      ytArgs.push('-f', 'bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio/best');
-    }
-    ytArgs.push(trimmedUrl);
-
-    await new Promise((resolve, reject) => {
-      const child = spawn(ytDlpBinary, ytArgs);
-
-      child.stdout.on('data', (chunk) => {
-        const text = chunk.toString();
-        for (const line of text.split(/[\r\n]+/)) {
-          if (!line.trim()) continue;
-          const match = line.match(/\[download\]\s+([\d\.]+)%\s+of\s+~?([\w\.]+)\s+(?:at\s+([\w\.\/]+))?\s+(?:ETA\s+([\d:]+))?/);
-          if (match) {
-            const rawPct = parseFloat(match[1]) || 0;
-            // Map download 0-100% to overall progress 25%-90%
-            const overallPct = Math.round(25 + (rawPct * 0.65));
-            emitProgress({
-              percent: overallPct,
-              downloadPercent: rawPct,
-              total: match[2] || '',
-              speed: match[3] || '',
-              eta: match[4] || '',
-              step: 'downloading',
-              message: `Downloading: ${rawPct.toFixed(0)}% of ${match[2]} (${match[3] || ''}) - ETA ${match[4] || ''}`
-            });
-          } else if (line.includes('[ExtractAudio]')) {
-            emitProgress({
-              percent: 92,
-              step: 'converting',
-              message: 'Step 3/3: Converting raw audio stream into standard MP3...'
-            });
-          }
-        }
-      });
-
-      child.stderr.on('data', (chunk) => {
-        const errText = chunk.toString();
-        if (errText.includes('ERROR:')) {
-          console.error('[SyncCast yt-dlp stderr]', errText.trim());
-        }
-      });
-
-      child.on('error', (err) => reject(err));
-
-      child.on('close', (code) => {
-        if (code === 0) {
-          emitProgress({
-            percent: 100,
-            step: 'complete',
-            message: 'Audio extraction complete!'
-          });
-          resolve();
-        } else {
-          reject(new Error(`yt-dlp extraction failed with exit code ${code}`));
-        }
-      });
-    });
-
-    // Locate the exact file that was written to disk
-    const allFiles = fs.readdirSync(CONFIG.AUDIO_UPLOAD_DIR);
-    const matchedFile = allFiles.find(f => f.startsWith(`yt-${safeVideoId}-${uniqueTimestamp}`));
-    if (!matchedFile) {
-      throw new Error('Downloaded audio file not found on disk');
-    }
-
-    const finalFilename = matchedFile;
-    const finalFilePath = path.join(CONFIG.AUDIO_UPLOAD_DIR, finalFilename);
-    const stats = fs.statSync(finalFilePath);
-    const ext = path.extname(finalFilename).toLowerCase();
-    const mimeType = ext === '.mp3' ? 'audio/mpeg' : ext === '.m4a' || ext === '.aac' ? 'audio/mp4' : ext === '.webm' || ext === '.opus' ? 'audio/webm' : 'audio/mpeg';
-
-    const trackInfo = {
-      id: `yt-${safeVideoId}`,
-      originalName: `${title} - ${author}`.slice(0, 100),
-      filename: finalFilename,
-      size: stats.size,
-      url: `/api/audio/stream/${finalFilename}`,
-      mimeType,
-      duration,
-      source: 'youtube',
-      artist: author.slice(0, 60)
-    };
-
-    console.log(`[SyncCast YouTube] Extraction successful: ${trackInfo.originalName} (${(stats.size / 1024 / 1024).toFixed(2)} MB, format: ${ext})`);
-    res.status(201).json(trackInfo);
-  } catch (err) {
-    console.error('[SyncCast YouTube] Extraction error:', err.message);
-
-    let clientFacingError = err.message;
-    if (err.message.includes('confirm you’re not a bot') || err.message.includes('Sign in to confirm')) {
-      clientFacingError = 'YouTube requires verification for cloud server IPs. To fix on Render: add your exported cookies to the YOUTUBE_COOKIES environment variable, or upload the MP3 directly.';
-    }
-
-    emitProgress({
-      percent: 0,
-      step: 'error',
-      message: clientFacingError
-    });
-    res.status(500).json({
-      error: `Failed to extract YouTube audio: ${clientFacingError}`
-    });
-  }
-});
 
 // 3. Static audio streaming / download endpoint (Path Traversal protected)
 router.get('/stream/:filename', (req, res) => {
@@ -504,40 +274,6 @@ router.get('/proxy', proxyLimiter, async (req, res) => {
   }
 });
 
-// Check if YouTube cookies are configured
-router.get('/cookies/status', (req, res) => {
-  const localCookies = path.resolve(process.cwd(), 'cookies.txt');
-  const serverCookies = path.resolve(__dirname, '..', '..', 'cookies.txt');
-  const tmpCookies = path.resolve(os.tmpdir(), 'synccast_yt_cookies.txt');
-  const renderSecret = '/etc/secrets/cookies.txt';
 
-  const hasEnv = !!(process.env.YOUTUBE_COOKIES && process.env.YOUTUBE_COOKIES.trim());
-  const hasFile = fs.existsSync(localCookies) || fs.existsSync(serverCookies) || fs.existsSync(tmpCookies) || fs.existsSync(renderSecret);
-
-  res.json({
-    configured: hasEnv || hasFile,
-    source: hasEnv ? 'env' : hasFile ? 'file' : 'none'
-  });
-});
-
-// Upload or save cookies text directly from web client
-router.post('/cookies', express.json({ limit: '1mb' }), (req, res) => {
-  const { cookiesContent } = req.body;
-  if (!cookiesContent || typeof cookiesContent !== 'string' || !cookiesContent.trim()) {
-    return res.status(400).json({ error: 'Missing cookie content' });
-  }
-
-  try {
-    const savePath = path.resolve(process.cwd(), 'cookies.txt');
-    const tmpPath = path.resolve(os.tmpdir(), 'synccast_yt_cookies.txt');
-    fs.writeFileSync(savePath, cookiesContent.trim(), 'utf8');
-    fs.writeFileSync(tmpPath, cookiesContent.trim(), 'utf8');
-    console.log('[SyncCast] YouTube authentication cookies saved to disk successfully');
-    res.json({ success: true, message: 'YouTube authentication cookies saved successfully' });
-  } catch (err) {
-    console.error('[SyncCast] Failed to save cookies:', err.message);
-    res.status(500).json({ error: `Failed to save cookies: ${err.message}` });
-  }
-});
 
 export const audioRouter = router;

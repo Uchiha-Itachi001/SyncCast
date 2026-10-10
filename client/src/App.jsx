@@ -23,8 +23,6 @@ export default function App() {
     localDriftMs,
     playbackPosition,
     duration,
-    isExtractingYt,
-    ytProgress,
     currentDspProfile,
     testPingActive,
     hostMigrationNotice,
@@ -35,7 +33,6 @@ export default function App() {
     joinRoom,
     leaveRoom,
     uploadAndSelectTrack,
-    extractAndSelectYtTrack,
     startPlayback,
     pausePlayback,
     seekPlayback,
@@ -149,9 +146,6 @@ export default function App() {
             room={room}
             buffering={buffering}
             onUploadTrack={uploadAndSelectTrack}
-            onExtractYtTrack={extractAndSelectYtTrack}
-            isExtractingYt={isExtractingYt}
-            ytProgress={ytProgress}
             onStartPlayback={startPlayback}
             onPausePlayback={pausePlayback}
             onSeekPlayback={seekPlayback}

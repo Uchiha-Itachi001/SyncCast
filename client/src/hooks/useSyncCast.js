@@ -19,16 +19,7 @@ export function useSyncCast() {
   const [localDriftMs, setLocalDriftMs] = useState(0);
   const [playbackPosition, setPlaybackPosition] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [isExtractingYt, setIsExtractingYt] = useState(false);
-  const [ytProgress, setYtProgress] = useState({
-    percent: 0,
-    downloadPercent: 0,
-    total: '',
-    speed: '',
-    eta: '',
-    step: 'idle',
-    message: ''
-  });
+
   const [currentDspProfile, setCurrentDspProfile] = useState('flat');
   const [testPingActive, setTestPingActive] = useState(false);
   const [hostMigrationNotice, setHostMigrationNotice] = useState(null);
@@ -290,12 +281,7 @@ export function useSyncCast() {
       setTimeout(() => setTestPingActive(false), 600);
     });
 
-    // Real-time YouTube audio extraction telemetry from backend
-    socket.on('youtube:progress', (data) => {
-      if (data) {
-        setYtProgress(data);
-      }
-    });
+
 
     return () => {
       clockSyncRef.current?.stopDriftMonitor();
@@ -310,7 +296,6 @@ export function useSyncCast() {
       socket.off('playback:pause');
       socket.off('channel:test_ping');
       socket.off('host:migrated');
-      socket.off('youtube:progress');
     };
   }, [ensureTrackLoaded, performSync]);
 
@@ -394,47 +379,7 @@ export function useSyncCast() {
     }
   }, []);
 
-  // YouTube Audio Extractor & Broadcaster (Phase 4.4)
-  const extractAndSelectYtTrack = useCallback(async (youtubeUrl) => {
-    try {
-      await audioEngine.initAudioContext();
-      setIsAudioUnlocked(true);
-      setError(null);
-      setIsExtractingYt(true);
-      setYtProgress({
-        percent: 5,
-        downloadPercent: 0,
-        total: '',
-        speed: '',
-        eta: '',
-        step: 'metadata',
-        message: 'Initializing YouTube extraction pipeline...'
-      });
 
-      const trackData = await apiService.extractYoutubeAudio(youtubeUrl, socketRef.current?.id);
-      setIsExtractingYt(false);
-
-      socketRef.current?.emit('track:select', trackData);
-
-      setBuffering(true);
-      setBufferProgress(0);
-      await audioEngine.loadTrack(trackData.url, (p) => {
-        setBufferProgress(p);
-      });
-      const ytDur = audioEngine.getDuration();
-      if (ytDur > 0) setDuration(ytDur);
-      else if (trackData.duration > 0) setDuration(trackData.duration);
-      setBuffering(false);
-      setBufferProgress(100);
-      socketRef.current?.emit('track:buffer_status', { buffered: true });
-      return trackData;
-    } catch (err) {
-      setIsExtractingYt(false);
-      setBuffering(false);
-      setError(`YouTube Extraction error: ${err.message}`);
-      throw err;
-    }
-  }, []);
 
   const leaveRoom = useCallback(() => {
     sessionStorage.removeItem('synccast_session');
@@ -449,7 +394,6 @@ export function useSyncCast() {
     setBufferProgress(0);
     setIsUploading(false);
     setUploadProgress(0);
-    setIsExtractingYt(false);
     setError(null);
 
     // Disconnect and immediately reconnect to guarantee clean unregistration on server
@@ -506,14 +450,10 @@ export function useSyncCast() {
   }, []);
 
   // Phase 4: Collaborative Playlist Queue
-  const addTrackToQueue = useCallback(async (fileOrUrl, isUrl = false, title = '', isYoutube = false) => {
+  const addTrackToQueue = useCallback(async (fileOrUrl, isUrl = false, title = '') => {
     try {
       let trackData;
-      if (isYoutube) {
-        setIsExtractingYt(true);
-        trackData = await apiService.extractYoutubeAudio(fileOrUrl);
-        setIsExtractingYt(false);
-      } else if (isUrl) {
+      if (isUrl) {
         trackData = apiService.createUrlTrack(fileOrUrl, title);
       } else {
         setIsUploading(true);
@@ -529,7 +469,6 @@ export function useSyncCast() {
       return trackData;
     } catch (err) {
       setIsUploading(false);
-      setIsExtractingYt(false);
       setBuffering(false);
       setError(`Add to queue error: ${err.message}`);
     }
@@ -568,8 +507,6 @@ export function useSyncCast() {
     isUploading,
     uploadProgress,
     uploadStats,
-    isExtractingYt,
-    ytProgress,
     playbackPosition,
     duration,
     localDriftMs,
@@ -584,7 +521,6 @@ export function useSyncCast() {
     joinRoom,
     leaveRoom,
     uploadAndSelectTrack,
-    extractAndSelectYtTrack,
     startPlayback,
     pausePlayback,
     seekPlayback,
