@@ -1,0 +1,28 @@
+{
+  "name": "synccast-root",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SyncCast - Multi-Device Synced Audio System over LAN",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "build": "npm --prefix client run build",
+    "start": "npm --prefix server start",
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev",
+    "build:client": "npm --prefix client run build",
+    "start:server": "npm --prefix server start"
+  },
+
+  "keywords": [
+    "audio-sync",
+    "web-audio-api",
+    "socket.io",
+    "pwa",
+    "multi-device"
+  ],
+  "author": "Pankoj Roy",
+  "license": "MIT"
+}

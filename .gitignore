@@ -1,0 +1,18 @@
+
+# AI Agent Tooling & Isolated State
+.agents/
+skills/
+MEMORY.md
+ARCHITECTURE.md
+AGENTS.md
+GEMINI.md
+skills.json
+node_modules/
+dist/
+client/dist/
+uploads/
+server/uploads/*
+!server/uploads/.gitkeep
+.env
+.DS_Store
+*.log

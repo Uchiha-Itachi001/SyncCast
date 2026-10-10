@@ -1,0 +1,234 @@
+:root {
+  --bg-deep: #07090c;
+  --bg-panel: #0e1117;
+  --bg-recessed: #0a0c10;
+  --border-hardware: #1e2430;
+  --border-active: #38bdf8;
+  --border-subtle: rgba(255, 255, 255, 0.07);
+
+  --accent-cyan: #06b6d4;
+  --accent-emerald: #10b981;
+  --accent-amber: #f59e0b;
+  --accent-rose: #f43f5e;
+
+  --text-main: #f1f5f9;
+  --text-muted: #64748b;
+  --text-dim: #475569;
+
+  --font-mono: "SF Mono", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+body {
+  background-color: var(--bg-deep);
+  color: var(--text-main);
+  min-height: 100vh;
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  background-image: 
+    linear-gradient(to right, rgba(255,255,255,0.02) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,255,255,0.02) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* Mechanical Audio Chassis Panels */
+.chassis-panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-hardware);
+  border-radius: 12px;
+  box-shadow: 
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.05),
+    0 10px 25px -5px rgba(0, 0, 0, 0.6);
+  position: relative;
+}
+
+.chassis-recessed {
+  background: var(--bg-recessed);
+  border: 1px solid rgba(0, 0, 0, 0.5);
+  box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.6);
+  border-radius: 8px;
+}
+
+/* Precision Hardware Header */
+.tech-label {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+}
+
+.tech-value {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-main);
+}
+
+/* Tactile Push Buttons */
+.btn-hardware-primary {
+  background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+  color: #38bdf8;
+  border: 1px solid #38bdf8;
+  box-shadow: 
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 4px 12px rgba(6, 182, 212, 0.2);
+  border-radius: 8px;
+  padding: 10px 20px;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.1s ease;
+}
+
+.btn-hardware-primary:hover {
+  background: #38bdf8;
+  color: #090b0e;
+  box-shadow: 0 0 20px rgba(56, 189, 248, 0.4);
+}
+
+.btn-hardware-primary:active {
+  transform: translateY(1px);
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
+}
+
+.btn-hardware-secondary {
+  background: linear-gradient(180deg, #181d26 0%, #11141b 100%);
+  color: var(--text-main);
+  border: 1px solid var(--border-hardware);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.12s ease;
+}
+
+.btn-hardware-secondary:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: #1c222d;
+}
+
+.btn-hardware-secondary:active {
+  transform: translateY(1px);
+}
+
+/* Mechanical LED Diode Indicator */
+.led-diode {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.led-emerald {
+  background: #10b981;
+  box-shadow: 0 0 8px #10b981;
+}
+
+.led-amber {
+  background: #f59e0b;
+  box-shadow: 0 0 8px #f59e0b;
+}
+
+.led-rose {
+  background: #f43f5e;
+  box-shadow: 0 0 8px #f43f5e;
+}
+
+.led-cyan {
+  background: #06b6d4;
+  box-shadow: 0 0 8px #06b6d4;
+}
+
+/* Segmented VU Meter */
+.vu-meter-bar {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+
+.vu-segment {
+  width: 4px;
+  height: 14px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.vu-segment.active-green {
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+}
+
+.vu-segment.active-amber {
+  background: #f59e0b;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+}
+
+.vu-segment.active-red {
+  background: #f43f5e;
+  box-shadow: 0 0 6px rgba(244, 63, 94, 0.6);
+}
+
+/* Acoustic Stage Radar Grid */
+.radar-grid {
+  position: relative;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(14, 165, 233, 0.04) 0%, rgba(7, 9, 12, 0.8) 70%);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+}
+
+@keyframes radarSweep {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.radar-sweep-arm {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 50%;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.6) 0%, transparent 100%);
+  transform-origin: 0% 0%;
+  animation: radarSweep 6s infinite linear;
+  pointer-events: none;
+}
+
+/* Ping acoustic chirp ring */
+@keyframes pingRing {
+  0% { transform: scale(0.6); opacity: 1; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+
+.chirp-ripple {
+  position: absolute;
+  border: 2px solid var(--accent-cyan);
+  border-radius: 50%;
+  animation: pingRing 0.8s ease-out forwards;
+  pointer-events: none;
+}
