@@ -37,7 +37,10 @@ export function useSyncCast() {
   // Auto-buffer helper ensuring audio buffer is downloaded as soon as a track exists
   const ensureTrackLoaded = useCallback(async (track) => {
     if (!track || !track.url) return;
-    if (audioEngine.currentTrackUrl === track.url && audioEngine.audioBuffer) return;
+    if (audioEngine.currentTrackUrl === track.url && audioEngine.audioBuffer) {
+      socketRef.current?.emit('track:buffer_status', { buffered: true });
+      return;
+    }
     if (loadingTrackUrlRef.current === track.url) return;
 
     loadingTrackUrlRef.current = track.url;
@@ -47,6 +50,7 @@ export function useSyncCast() {
       console.log('[SyncCast] Buffering track:', track.originalName || track.filename);
       await audioEngine.loadTrack(track.url, (progress) => {
         setBufferProgress(progress);
+        socketRef.current?.emit('track:buffer_progress', { progress });
       });
       const dur = audioEngine.getDuration();
       if (dur > 0) setDuration(dur);
@@ -236,8 +240,8 @@ export function useSyncCast() {
           myChannel
         );
 
-        // Start continuous drift monitoring loop (fast 1200ms burst with min-RTT filtering)
-        clockSyncRef.current?.startDriftMonitor(1200, ({ drift, offset: newOffset, rtt: newRtt }) => {
+        // Start continuous drift monitoring loop (stable 3000ms check with min-RTT filtering)
+        clockSyncRef.current?.startDriftMonitor(3000, ({ drift, offset: newOffset, rtt: newRtt }) => {
           const compensation = audioEngine.compensateDrift(drift);
           setDriftCompensation(compensation);
           setLocalDriftMs(drift);
@@ -365,6 +369,7 @@ export function useSyncCast() {
       setBufferProgress(0);
       await audioEngine.loadTrack(trackData.url, (p) => {
         setBufferProgress(p);
+        socketRef.current?.emit('track:buffer_progress', { progress: p });
       });
       const dur = audioEngine.getDuration();
       if (dur > 0) setDuration(dur);
@@ -404,7 +409,7 @@ export function useSyncCast() {
     }
   }, []);
 
-  const startPlayback = useCallback(async (delayMs = 2000) => {
+  const startPlayback = useCallback(async (delayMs = 2500) => {
     try {
       await audioEngine.initAudioContext();
       setIsAudioUnlocked(true);

@@ -24,8 +24,6 @@ export function setupSocketHandlers(io) {
           rtt: typeof rtt === 'number' ? rtt : 0,
           drift: typeof drift === 'number' ? drift : 0
         });
-        // Broadcast sync health update to room
-        io.to(room.code).emit(SOCKET_EVENTS.ROOM_UPDATE, room.toJSON());
 
         // Check if drift threshold violated
         if (drift && Math.abs(drift) > CONFIG.MAX_DRIFT_MS) {
@@ -157,7 +155,21 @@ export function setupSocketHandlers(io) {
     socket.on(SOCKET_EVENTS.PLAYBACK_SCHEDULE, ({ startDelayMs } = {}) => {
       const room = roomService.getRoomBySocketId(socket.id);
       if (room && room.hostSocketId === socket.id) {
-        const delay = (typeof startDelayMs === 'number' && startDelayMs >= 500 && startDelayMs <= 10000)
+        if (!room.currentTrack) {
+          return socket.emit(SOCKET_EVENTS.ROOM_ERROR, { message: 'No audio track selected.' });
+        }
+
+        // Readiness Barrier: All online devices must be 100% buffered and audio unlocked
+        if (!room.isAllReadyForPlayback()) {
+          const unready = Array.from(room.devices.values())
+            .filter(d => d.isOnline !== false && (!d.buffered || !d.isAudioUnlocked))
+            .map(d => `${d.name} (${!d.buffered ? 'buffering ' + (d.bufferProgress || 0) + '%' : 'audio locked'})`);
+          return socket.emit(SOCKET_EVENTS.ROOM_ERROR, {
+            message: `Waiting for all devices to sync: ${unready.join(', ')}`
+          });
+        }
+
+        const delay = (typeof startDelayMs === 'number' && startDelayMs >= 1000 && startDelayMs <= 10000)
           ? startDelayMs
           : CONFIG.SCHEDULE_AHEAD_MS;
         const { scheduledTime } = roomService.setScheduledPlayback(room.code, delay);

@@ -232,3 +232,235 @@ body {
   animation: pingRing 0.8s ease-out forwards;
   pointer-events: none;
 }
+
+/* ==========================================================================
+   WAVE-LIGHT RADIAL PHOTON PROGRESS BAR (Developer Bucket Vault)
+   Tags: progress-bar, wave-light, radial-spot, glow, animated, photon
+   ========================================================================== */
+.wave-track {
+  width: 100%;
+  height: 12px;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9999px;
+  position: relative;
+  overflow: hidden;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.8);
+}
+
+.wave-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #0284c7 0%, #38bdf8 60%, #7dd3fc 100%);
+  border-radius: 9999px;
+  position: relative;
+  overflow: hidden;
+  transition: width 200ms ease-out;
+  box-shadow: 0 0 15px rgba(56, 189, 248, 0.4);
+}
+
+.wave-fill-emerald {
+  background: linear-gradient(90deg, #059669 0%, #10b981 60%, #6ee7b7 100%);
+  box-shadow: 0 0 15px rgba(16, 185, 129, 0.4);
+}
+
+.wave-fill-amber {
+  background: linear-gradient(90deg, #d97706 0%, #f59e0b 60%, #fcd34d 100%);
+  box-shadow: 0 0 15px rgba(245, 158, 11, 0.4);
+}
+
+/* Natural Radial Light Spot (Screen Blend from Developer Bucket) */
+.wave-light-spot {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 70px;
+  height: 70px;
+  background: radial-gradient(circle at 50% 50%, 
+    rgba(255, 255, 255, 1) 0%, 
+    rgba(186, 230, 253, 0.85) 25%, 
+    rgba(56, 189, 248, 0.35) 50%, 
+    transparent 70%
+  );
+  mix-blend-mode: screen;
+  filter: blur(3px);
+  animation: sweep-single-spot 2.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  pointer-events: none;
+}
+
+@keyframes sweep-single-spot {
+  0% { left: -70px; opacity: 0; }
+  15% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { left: 100%; opacity: 0; }
+}
+
+/* ==========================================================================
+   ANIMATED RGB GRADIENT BORDER BUTTON (Developer Bucket Vault)
+   ========================================================================== */
+.btn-rgb-gradient {
+  position: relative;
+  padding: 9px 20px;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #ffffff;
+  background: #090e17;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.35);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease;
+  z-index: 1;
+}
+
+.btn-rgb-gradient::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  right: -2px;
+  bottom: -2px;
+  background: linear-gradient(90deg, #10b981, #06b6d4, #3b82f6, #10b981);
+  background-size: 300% 300%;
+  border-radius: 10px;
+  z-index: -1;
+  animation: rgb-border-rotate 3.5s linear infinite;
+}
+
+@keyframes rgb-border-rotate {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.btn-rgb-gradient:hover {
+  transform: translateY(-1px) scale(1.02);
+  box-shadow: 0 0 28px rgba(16, 185, 129, 0.55);
+}
+
+.btn-rgb-gradient:active {
+  transform: translateY(1px) scale(0.98);
+}
+
+/* ==========================================================================
+   FLUID RESPONSIVE SYSTEM & VIEWPORT BREAKPOINTS
+   ========================================================================== */
+.responsive-container {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 0 16px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.responsive-two-col {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+@media (min-width: 768px) {
+  .responsive-two-col {
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+}
+
+.responsive-stage-box {
+  width: 100%;
+  max-width: 380px;
+  aspect-ratio: 1 / 1;
+  margin: 0 auto;
+  position: relative;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+}
+
+.responsive-transport-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+@media (min-width: 640px) {
+  .responsive-transport-strip {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+  }
+}
+
+.responsive-transport-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.responsive-dsp-strip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.channel-rack-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+@media (min-width: 580px) {
+  .channel-rack-grid {
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 14px;
+  }
+}
+
+/* Touch Friendly Mobile Targets */
+@media (max-width: 640px) {
+  .btn-hardware-primary,
+  .btn-hardware-secondary,
+  .btn-rgb-gradient {
+    min-height: 40px;
+    padding: 8px 14px;
+  }
+
+  .tech-label {
+    font-size: 0.62rem;
+  }
+
+  .chassis-panel {
+    border-radius: 10px;
+    padding: 14px !important;
+  }
+
+  .responsive-container {
+    padding: 0 10px 40px;
+    gap: 14px;
+  }
+}
+
+.header-panel {
+  margin: 10px 10px 16px;
+  padding: 10px 14px;
+}
+
+@media (min-width: 640px) {
+  .header-panel {
+    margin: 14px 16px 20px;
+    padding: 12px 20px;
+  }
+}

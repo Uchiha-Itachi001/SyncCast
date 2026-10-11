@@ -102,9 +102,15 @@ export function HostDashboard({
 
   const isPlaying = room.playbackState?.status === 'playing' || room.playbackState?.status === 'scheduled';
   const devices = room.devices || [];
+  const onlineDevices = devices.filter((d) => d.isOnline !== false);
+  const bufferedDevices = onlineDevices.filter((d) => d.buffered);
+  const unlockedDevices = onlineDevices.filter((d) => d.isAudioUnlocked);
+  const isAllBuffered = Boolean(room.currentTrack && onlineDevices.length > 0 && bufferedDevices.length === onlineDevices.length);
+  const isAllUnlocked = Boolean(onlineDevices.length > 0 && unlockedDevices.length === onlineDevices.length);
+  const isAllReady = Boolean(isAllBuffered && isAllUnlocked);
 
   return (
-    <div style={{ maxWidth: '960px', margin: '0 auto', padding: '0 16px 60px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+    <div className="responsive-container">
       {/* Console Top Telemetry Strip */}
       <div className="chassis-panel" style={{ padding: '12px 18px', display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -243,16 +249,16 @@ export function HostDashboard({
                 {bufferProgress}%
               </span>
             </div>
-            <div style={{ height: '6px', background: 'rgba(255, 255, 255, 0.08)', borderRadius: '3px', overflow: 'hidden' }}>
+            <div className="wave-track" style={{ height: '8px' }}>
               <div
+                className="wave-fill wave-fill-amber"
                 style={{
                   width: `${bufferProgress}%`,
-                  height: '100%',
-                  background: '#f59e0b',
-                  boxShadow: '0 0 8px rgba(245, 158, 11, 0.4)',
-                  transition: 'width 0.15s ease'
+                  transition: 'width 0.2s ease'
                 }}
-              />
+              >
+                <div className="wave-light-spot" />
+              </div>
             </div>
           </div>
         )}
@@ -360,10 +366,10 @@ export function HostDashboard({
               />
             </div>
 
-            {/* Transport Controller Row */}
-            <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+            {/* Transport Controller Strip */}
+            <div className="responsive-transport-strip">
               {/* Playback Transport Buttons */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div className="responsive-transport-buttons">
                 <button
                   type="button"
                   className="btn-hardware-secondary"
@@ -402,15 +408,27 @@ export function HostDashboard({
                 ) : (
                   <button
                     type="button"
-                    className="btn-hardware-primary"
-                    onClick={() => onStartPlayback(2000)}
+                    disabled={!isAllReady}
+                    className={isAllReady ? "btn-rgb-gradient" : "btn-hardware-secondary"}
+                    onClick={() => isAllReady && onStartPlayback(2500)}
+                    title={!isAllBuffered ? "Waiting for all peers to download and decode audio" : !isAllUnlocked ? "Waiting for all peers to arm audio" : "Trigger synchronized playback"}
                     style={{
-                      padding: '8px 22px',
-                      boxShadow: '0 0 15px rgba(56, 189, 248, 0.4)',
-                      fontWeight: 800
+                      padding: isAllReady ? '10px 22px' : '8px 20px',
+                      color: isAllReady ? '#fff' : '#fbbf24',
+                      fontWeight: 800,
+                      cursor: isAllReady ? 'pointer' : 'not-allowed',
+                      opacity: isAllReady ? 1 : 0.88,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '8px'
                     }}
                   >
-                    <Play size={17} /> TRIGGER SYNC PLAY
+                    <Play size={17} />
+                    {isAllReady
+                      ? `TRIGGER SYNC PLAY (${onlineDevices.length} READY)`
+                      : !isAllBuffered
+                      ? `WAITING FOR PEERS (${bufferedDevices.length}/${onlineDevices.length})`
+                      : `WAITING FOR ARM (${unlockedDevices.length}/${onlineDevices.length})`}
                   </button>
                 )}
 
@@ -445,8 +463,53 @@ export function HostDashboard({
                 </button>
               </div>
 
+              {/* Live Peer Sync Readiness Strip */}
+              {!isAllReady && room.currentTrack && (
+                <div
+                  style={{
+                    width: '100%',
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    gap: '8px',
+                    marginTop: '10px',
+                    padding: '10px 14px',
+                    background: 'rgba(245, 158, 11, 0.08)',
+                    border: '1px solid rgba(245, 158, 11, 0.3)',
+                    borderRadius: '6px',
+                    fontSize: '0.74rem',
+                    fontFamily: 'var(--font-mono)'
+                  }}
+                >
+                  <div className="led-diode led-amber" />
+                  <span style={{ color: '#fbbf24', fontWeight: 800 }}>SYNC BARRIER ACTIVE:</span>
+                  <span style={{ color: 'var(--text-muted)' }}>Playback locked until all speakers finish decoding:</span>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', width: '100%', marginTop: '4px' }}>
+                    {onlineDevices.map((d) => (
+                      <div
+                        key={d.id}
+                        style={{
+                          padding: '3px 8px',
+                          borderRadius: '4px',
+                          background: d.buffered && d.isAudioUnlocked ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                          border: `1px solid ${d.buffered && d.isAudioUnlocked ? '#10b981' : '#f59e0b'}`,
+                          color: d.buffered && d.isAudioUnlocked ? '#10b981' : '#fbbf24',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px'
+                        }}
+                      >
+                        <span style={{ fontWeight: 700 }}>{d.name}:</span>
+                        <span>{d.buffered ? 'BUFFER 100%' : `DOWNLOADING ${d.bufferProgress || 0}%`}</span>
+                        {!d.isAudioUnlocked && <span style={{ color: '#f87171' }}>[AUDIO LOCKED]</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Host Room-Wide DSP Selector */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <div className="responsive-dsp-strip">
                 <span className="tech-label" style={{ display: 'flex', alignItems: 'center', gap: '4px', marginRight: '4px' }}>
                   <ShieldCheck size={12} color="#10b981" /> ROOM DSP:
                 </span>
@@ -625,7 +688,7 @@ export function HostDashboard({
       />
 
       {/* Center 2-Column: Spatial Stage & QR Pairing Dock */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '20px' }}>
+      <div className="responsive-two-col">
 
         {/* Left: Spatial Radar Stage */}
         <SpatialStage
@@ -682,7 +745,7 @@ export function HostDashboard({
           </span>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '14px' }}>
+        <div className="channel-rack-grid">
           {devices.map((dev, idx) => (
             <ChannelStrip
               key={dev.id}

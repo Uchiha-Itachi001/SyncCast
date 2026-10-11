@@ -107,8 +107,8 @@ export function SpatialStage({
         onPointerUp={handlePointerUp}
         style={{
           width: '100%',
-          maxWidth: '460px',
-          height: '380px',
+          maxWidth: '380px',
+          aspectRatio: '1 / 1',
           margin: '0 auto',
           position: 'relative',
           overflow: 'hidden',

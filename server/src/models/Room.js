@@ -159,10 +159,18 @@ export class Room {
 
   isAllBuffered() {
     if (this.devices.size === 0) return false;
-    for (const dev of this.devices.values()) {
-      if (!dev.buffered) return false;
-    }
-    return true;
+    const online = Array.from(this.devices.values()).filter(d => d.isOnline !== false);
+    if (online.length === 0) return false;
+    return online.every(d => Boolean(d.buffered));
+  }
+
+  isAllReadyForPlayback() {
+    if (this.devices.size === 0) return false;
+    if (!this.currentTrack) return false;
+    const online = Array.from(this.devices.values()).filter(d => d.isOnline !== false);
+    if (online.length === 0) return false;
+    // Every active device must have finished buffering and have audio unlocked
+    return online.every(d => Boolean(d.buffered) && Boolean(d.isAudioUnlocked));
   }
 
   // Phase 4: Collaborative Playlist Queue
@@ -264,7 +272,9 @@ export class Room {
       requiredSkipVotes: requiredVotes,
       playbackState: this.playbackState,
       devices: Array.from(this.devices.values()),
-      deviceCount: this.devices.size
+      deviceCount: this.devices.size,
+      isAllBuffered: this.isAllBuffered(),
+      isAllReady: this.isAllReadyForPlayback()
     };
   }
 }

@@ -75,7 +75,37 @@ export class AudioEngine {
       throw new Error(`Failed to download audio file (${response.status}): ${response.statusText}`);
     }
 
-    const arrayBuffer = await response.arrayBuffer();
+    const contentLength = response.headers.get('content-length');
+    const totalBytes = contentLength ? parseInt(contentLength, 10) : 0;
+
+    let arrayBuffer;
+    if (response.body && totalBytes > 0) {
+      const reader = response.body.getReader();
+      const chunks = [];
+      let receivedBytes = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        receivedBytes += value.length;
+        if (onProgress) {
+          const percent = Math.min(99, Math.round((receivedBytes / totalBytes) * 100));
+          onProgress(percent);
+        }
+      }
+
+      const allChunks = new Uint8Array(receivedBytes);
+      let position = 0;
+      for (const chunk of chunks) {
+        allChunks.set(chunk, position);
+        position += chunk.length;
+      }
+      arrayBuffer = allChunks.buffer;
+    } else {
+      arrayBuffer = await response.arrayBuffer();
+    }
+
     if (onProgress) onProgress(100);
 
     // Decode audio data safely (supporting both Promise and callback syntax for all browsers)
@@ -122,25 +152,21 @@ export class AudioEngine {
     // 2. Compute delta until start in seconds
     let delaySeconds = (clientWallclockTarget - Date.now()) / 1000;
 
-    // Guard against extreme clock skew: clamp delay to max 2.5 seconds
-    if (delaySeconds > 2.5) {
-      console.warn(`[SyncCast] Scheduled delay ${delaySeconds.toFixed(2)}s clamped to 1.5s to prevent stalled start`);
-      delaySeconds = 1.5;
+    // Safety guard against runaway network skew, but never clamp legitimate 2.5s scheduled start
+    if (delaySeconds > 10.0) {
+      console.warn(`[SyncCast] Excessive delay ${delaySeconds.toFixed(2)}s clamped to 10s`);
+      delaySeconds = 10.0;
     }
 
     let startOffset = position;
     let scheduledContextTime;
 
     if (delaySeconds < 0) {
-      // Start time already passed: advance into audio track only if delay is within normal transit window (< 2.0s)
-      if (Math.abs(delaySeconds) < 2.0) {
-        startOffset = Math.min(Math.max(0, this.audioBuffer.duration - 0.2), position + Math.abs(delaySeconds));
-      } else {
-        // Extreme negative delta indicates clock skew rather than audio already playing
-        console.warn(`[SyncCast] Negative delay ${delaySeconds.toFixed(2)}s clamped; starting from offset ${position}s.`);
-        startOffset = position;
-      }
+      // Start time passed: advance into audio track by the elapsed delay
+      const elapsedPassed = Math.abs(delaySeconds);
+      startOffset = Math.min(Math.max(0, (this.audioBuffer.duration || 100) - 0.2), position + elapsedPassed);
       scheduledContextTime = this.ctx.currentTime;
+      console.warn(`[SyncCast] Scheduled start was ${elapsedPassed.toFixed(3)}s ago; starting from offset ${startOffset.toFixed(2)}s`);
     } else {
       scheduledContextTime = this.ctx.currentTime + delaySeconds;
     }
@@ -217,27 +243,25 @@ export class AudioEngine {
 
     const absDrift = Math.abs(driftMs);
 
-    if (absDrift <= 3) {
-      // Deadband: drift within 3ms is imperceptible, maintain exact 1.0x rate
+    if (absDrift <= 10) {
+      // Deadband: drift within 10ms is imperceptible and within Wi-Fi jitter window; maintain exact 1.0x rate
       targetRate = 1.0;
       status = 'locked';
-    } else if (absDrift <= 20) {
-      // Micro-nudge: ±0.15% speed change (completely inaudible pitch shift)
-      // If drift > 0 (client ahead of server), slow down slightly (0.9985)
-      // If drift < 0 (client behind server), speed up slightly (1.0015)
-      targetRate = driftMs > 0 ? 0.9985 : 1.0015;
+    } else if (absDrift <= 30) {
+      // Ultra-gentle nudge: ±0.05% speed change (completely transparent to human ear)
+      targetRate = driftMs > 0 ? 0.9995 : 1.0005;
       status = 'micro-nudging';
-    } else if (absDrift <= 40) {
-      // Fast recovery: ±0.4% speed change
-      targetRate = driftMs > 0 ? 0.996 : 1.004;
-      status = 'fast-recovering';
+    } else if (absDrift <= 60) {
+      // Moderate nudge: ±0.15% speed change
+      targetRate = driftMs > 0 ? 0.9985 : 1.0015;
+      status = 'recovering';
     } else {
-      // Catastrophic WiFi packet dropout (>40ms): signal hard re-seek required
+      // Catastrophic packet loss / clock jump (>60ms)
       status = 'resync-needed';
     }
 
     if (this.currentPlaybackRate !== targetRate) {
-      this.sourceNode.playbackRate.linearRampToValueAtTime(targetRate, now + 1.2);
+      this.sourceNode.playbackRate.linearRampToValueAtTime(targetRate, now + 2.0);
       this.currentPlaybackRate = targetRate;
     }
 

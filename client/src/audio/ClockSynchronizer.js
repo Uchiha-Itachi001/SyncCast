@@ -32,44 +32,54 @@ export class ClockSynchronizer {
   singlePing() {
     return new Promise((resolve) => {
       const t0 = Date.now();
+      let finished = false;
+
+      const cleanup = () => {
+        finished = true;
+        this.socket.off('ntp:pong', onPong);
+      };
 
       const onPong = (data) => {
-        if (data.t0 === t0) {
+        if (!finished && data && data.t0 === t0) {
+          cleanup();
+          clearTimeout(timeoutId);
           const t2 = Date.now();
           const t1 = data.t1;
-          const rtt = t2 - t0;
+          const rtt = Math.max(1, t2 - t0);
           const rawOffset = t1 - (t0 + t2) / 2;
 
           this.samples.push({ t0, t1, t2, rtt, rawOffset });
-          this.socket.off('ntp:pong', onPong);
           resolve();
         }
       };
 
+      const timeoutId = setTimeout(() => {
+        if (!finished) {
+          cleanup();
+          resolve();
+        }
+      }, 1000);
+
       this.socket.on('ntp:pong', onPong);
       this.socket.emit('ntp:ping', { t0 });
-
-      // Fallback timeout in case packet dropped
-      setTimeout(() => {
-        this.socket.off('ntp:pong', onPong);
-        resolve();
-      }, 1000);
     });
   }
 
   calculateOffset() {
     if (this.samples.length === 0) return;
 
-    // Filter out top 40% highest RTT spikes (WiFi jitter)
+    // Cristian's Algorithm: Sort by lowest RTT (least queuing delay / highest symmetry)
     const sorted = [...this.samples].sort((a, b) => a.rtt - b.rtt);
-    const keep = sorted.slice(0, Math.max(2, Math.floor(sorted.length * 0.6)));
+    // Take the best 2-3 lowest-RTT samples to eliminate Wi-Fi airwaves queue jitter
+    const keepCount = Math.max(1, Math.min(3, Math.floor(sorted.length * 0.3)));
+    const best = sorted.slice(0, keepCount);
 
-    const avgOffset = keep.reduce((acc, s) => acc + s.rawOffset, 0) / keep.length;
-    const avgRtt = keep.reduce((acc, s) => acc + s.rtt, 0) / keep.length;
+    const avgOffset = best.reduce((acc, s) => acc + s.rawOffset, 0) / best.length;
+    const avgRtt = best.reduce((acc, s) => acc + s.rtt, 0) / best.length;
 
     this.offset = Math.round(avgOffset);
     this.rtt = Math.round(avgRtt);
-    this.minRtt = Math.min(...keep.map((s) => s.rtt));
+    this.minRtt = sorted[0].rtt;
   }
 
   /**
@@ -82,25 +92,31 @@ export class ClockSynchronizer {
     for (let i = 0; i < count; i++) {
       const sample = await new Promise((resolve) => {
         const t0 = Date.now();
+        let done = false;
 
         const onPong = (data) => {
-          if (data.t0 === t0) {
+          if (!done && data && data.t0 === t0) {
+            done = true;
+            clearTimeout(to);
+            this.socket.off('ntp:pong', onPong);
             const t2 = Date.now();
             const t1 = data.t1;
-            const rtt = t2 - t0;
+            const rtt = Math.max(1, t2 - t0);
             const rawOffset = t1 - (t0 + t2) / 2;
-            this.socket.off('ntp:pong', onPong);
             resolve({ t0, t1, t2, rtt, rawOffset });
           }
         };
 
+        const to = setTimeout(() => {
+          if (!done) {
+            done = true;
+            this.socket.off('ntp:pong', onPong);
+            resolve(null);
+          }
+        }, 800);
+
         this.socket.on('ntp:pong', onPong);
         this.socket.emit('ntp:ping', { t0 });
-
-        setTimeout(() => {
-          this.socket.off('ntp:pong', onPong);
-          resolve(null);
-        }, 800);
       });
 
       if (sample) burstSamples.push(sample);
@@ -114,10 +130,10 @@ export class ClockSynchronizer {
   }
 
   /**
-   * Starts periodic NTP background check to calculate continuous clock drift (Phase 3.1)
-   * Runs fast burst pinging every 1200ms with min-RTT filtering for true sub-5ms accuracy.
+   * Starts periodic NTP background check to monitor clock health.
+   * Runs non-intrusively every 3000ms.
    */
-  startDriftMonitor(intervalMs = 1200, onDriftMeasured) {
+  startDriftMonitor(intervalMs = 3000, onDriftMeasured) {
     this.stopDriftMonitor();
 
     let isBurstRunning = false;
@@ -127,25 +143,21 @@ export class ClockSynchronizer {
       isBurstRunning = true;
 
       try {
-        const bestSample = await this.burstPing(3, 25);
+        const bestSample = await this.burstPing(2, 25);
         if (bestSample) {
           const { rtt, rawOffset } = bestSample;
 
           // If RTT is within sane bounds (< 2.2x our calibrated baseline)
           const baselineRtt = this.minRtt || this.rtt || 100;
           if (rtt <= baselineRtt * 2.2 || this.rtt === 0) {
-            // Update baseline minRTT if we find a faster network route
             if (rtt < (this.minRtt || 999999)) this.minRtt = rtt;
 
-            // Compute delta between raw packet offset and current moving average offset
+            // Compute delta between raw packet offset and current established offset
             const rawDelta = rawOffset - this.offset;
 
-            // Smooth the true hardware oscillator drift: clamp wild network spikes to ±5ms
-            const clampedDelta = Math.max(-5, Math.min(5, rawDelta));
-            this.drift = Math.round(((this.drift || 0) * 0.7 + clampedDelta * 0.3) * 10) / 10;
-
-            // Stable exponential moving average for master clock offset (0.15 weight)
-            this.offset = Math.round(this.offset * 0.85 + rawOffset * 0.15);
+            // Keep hardware baseline stable; smooth network variance to ±3ms
+            const clampedDelta = Math.max(-4, Math.min(4, rawDelta));
+            this.drift = Math.round(((this.drift || 0) * 0.8 + clampedDelta * 0.2) * 10) / 10;
             this.rtt = Math.round(this.rtt * 0.85 + rtt * 0.15);
 
             if (onDriftMeasured) {

@@ -3,7 +3,7 @@ import { Radio, Wifi, WifiOff, Users, Activity, LogOut } from 'lucide-react';
 
 export function Header({ connected, roomCode, deviceCount, onLeaveRoom }) {
   return (
-    <header className="chassis-panel" style={{ margin: '14px 16px 20px', padding: '12px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+    <header className="header-panel chassis-panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: 'linear-gradient(135deg, #18202f 0%, #0c0f14 100%)', border: '1px solid #38bdf8', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 10px rgba(56, 189, 248, 0.25)' }}>
           <Radio size={18} color="#38bdf8" />

@@ -144,13 +144,15 @@ export function GuestView({
 
         {/* Buffering Progress Bar */}
         {buffering && (
-          <div className="chassis-recessed" style={{ padding: '10px 14px', marginBottom: '16px' }}>
+          <div className="chassis-recessed" style={{ padding: '12px 14px', marginBottom: '16px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
               <span className="tech-label" style={{ color: '#f59e0b' }}>PRE-BUFFERING AUDIO</span>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', fontWeight: 700, color: '#f59e0b' }}>{bufferProgress}%</span>
             </div>
-            <div style={{ height: '4px', background: 'rgba(255,255,255,0.06)', borderRadius: '2px', overflow: 'hidden' }}>
-              <div style={{ width: `${bufferProgress}%`, height: '100%', background: '#f59e0b', transition: 'width 0.2s ease' }} />
+            <div className="wave-track" style={{ height: '8px' }}>
+              <div className="wave-fill wave-fill-amber" style={{ width: `${bufferProgress}%` }}>
+                <div className="wave-light-spot" />
+              </div>
             </div>
           </div>
         )}
@@ -174,16 +176,17 @@ export function GuestView({
             </span>
           </div>
 
-          {/* Synchronized Progress Bar */}
-          <div style={{ height: '5px', background: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden', marginBottom: '6px' }}>
+          {/* Synchronized Wave Progress Bar */}
+          <div className="wave-track" style={{ height: '8px', marginBottom: '8px' }}>
             <div
+              className="wave-fill"
               style={{
                 width: `${progressPercent}%`,
-                height: '100%',
-                background: `linear-gradient(90deg, ${channelColor} 0%, #10b981 100%)`,
-                transition: isPlaying ? 'width 0.15s linear' : 'none'
+                background: `linear-gradient(90deg, ${channelColor} 0%, #10b981 100%)`
               }}
-            />
+            >
+              {isPlaying && <div className="wave-light-spot" />}
+            </div>
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
