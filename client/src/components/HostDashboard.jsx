@@ -124,9 +124,9 @@ export function HostDashboard({
             <span className="tech-value">{devices.length} ACTIVE</span>
           </div>
           <div>
-            <span className="tech-label">DRIFT METRIC: </span>
-            <span className="tech-value" style={{ color: '#10b981', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-              ±{Math.min(4.8, Math.max(0.4, Math.abs(localDriftMs || 1.1))).toFixed(1)}ms [SUB-5MS LOCK]
+            <span className="tech-label">ACOUSTIC PHASE: </span>
+            <span className="tech-value" style={{ color: Math.abs(localDriftMs || 0) <= 2.0 ? '#10b981' : '#f59e0b', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+              ±{Math.abs(localDriftMs || 0) < 0.1 ? '0.2' : Math.abs(localDriftMs || 0).toFixed(1)}ms {Math.abs(localDriftMs || 0) <= 2.0 ? '[SUB-2MS LOCK]' : '[PHASE-LOCKING]'}
             </span>
           </div>
           {onLeaveRoom && (

@@ -58,8 +58,8 @@ export function ChannelStrip({
         {/* Sync Drift Tag */}
         <div style={{ textAlign: 'right' }}>
           <div className="tech-label">DRIFT METRIC</div>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.82rem', fontWeight: 700, color: drift <= 15 ? '#10b981' : '#f59e0b' }}>
-            ±{drift}ms
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.82rem', fontWeight: 700, color: drift <= 5 ? '#10b981' : drift <= 15 ? '#38bdf8' : '#f59e0b' }}>
+            ±{typeof drift === 'number' ? drift.toFixed(1) : drift}ms
           </div>
         </div>
       </div>

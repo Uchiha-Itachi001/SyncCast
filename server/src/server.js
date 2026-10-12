@@ -73,14 +73,29 @@ if (fs.existsSync(clientDistPath)) {
   });
 }
 
-// Setup Socket.io
+// Setup Low-Latency Real-Time Socket.io
 const io = new Server(server, {
   cors: {
     origin: '*',
     methods: ['GET', 'POST']
   },
-  pingInterval: 5000,
-  pingTimeout: 10000
+  transports: ['websocket', 'polling'],
+  perMessageDeflate: false, // Critical: Disables compression framing buffer to eliminate queuing delay on LAN
+  httpCompression: false,
+  pingInterval: 10000,
+  pingTimeout: 5000
+});
+
+// Configure underlying TCP socket for zero Nagle packet buffering
+io.engine.on('connection', (rawSocket) => {
+  if (rawSocket.transport?.socket?.setNoDelay) {
+    rawSocket.transport.socket.setNoDelay(true);
+  }
+  rawSocket.on('upgrade', (transport) => {
+    if (transport?.socket?.setNoDelay) {
+      transport.socket.setNoDelay(true);
+    }
+  });
 });
 
 // Provide io instance to Express routes

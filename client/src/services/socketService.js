@@ -17,9 +17,12 @@ class SocketService {
 
     const url = serverUrl || defaultUrl;
     this.socket = io(url, {
-
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000
+      transports: ['websocket', 'polling'],
+      upgrade: true,
+      rememberUpgrade: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 500,
+      timeout: 8000
     });
 
 

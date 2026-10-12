@@ -1,13 +1,16 @@
 import { ChannelRouter } from './ChannelRouter.js';
 import { ParametricEqualizer } from './ParametricEqualizer.js';
+import { getPreciseTime } from './ClockSynchronizer.js';
 
 /**
- * Web Audio API Sample-Accurate Playback Engine (Phase 3 DSP & Drift Engine)
+ * Web Audio API Sample-Accurate Playback Engine
  * Features:
- * - Hardware AudioContext clock scheduling
+ * - Sub-millisecond hardware AudioContext clock scheduling
+ * - Automatic hardware outputLatency + baseLatency compensation
+ * - Manual device hardware latency calibration trim (±ms)
+ * - Hardware DAC sleep prevention keep-alive transducer
+ * - Active Phase-Locked Loop (PLL) micro-pitch drift compensation
  * - 3-Band Parametric Equalizer chain
- * - Continuous micro-pitch drift compensation (±0.15% - 0.5%)
- * - Chunked stream buffering with live percentage reporting
  */
 export class AudioEngine {
   constructor() {
@@ -16,19 +19,33 @@ export class AudioEngine {
     this.sourceNode = null;
     this.channelRouter = null;
     this.equalizer = null;
+    this.keepAliveNode = null;
     this.isPlaying = false;
     this.currentTrackUrl = null;
     this.isUnlocked = false;
     this.currentPlaybackRate = 1.0;
+    this.scheduledContextTime = null;
+    this.startOffset = 0;
+    this.userHardwareTrimMs = 0;
+
+    // Recall saved hardware calibration trim if previously configured
+    try {
+      const saved = localStorage.getItem('synccast_hardware_trim_ms');
+      if (saved) {
+        this.userHardwareTrimMs = parseFloat(saved) || 0;
+      }
+    } catch (_) {}
   }
 
   /**
-   * Initializes or resumes AudioContext upon user gesture (iOS Safari requirement)
+   * Initializes or resumes AudioContext and attaches silent DAC keep-alive (iOS WebKit / Android)
    */
   async initAudioContext() {
     if (!this.ctx) {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      this.ctx = new AudioContextClass();
+      this.ctx = new AudioContextClass({
+        latencyHint: 'interactive'
+      });
       this.channelRouter = new ChannelRouter(this.ctx);
       this.equalizer = new ParametricEqualizer(this.ctx);
     }
@@ -39,18 +56,46 @@ export class AudioEngine {
       } catch (_) {}
     }
 
-    // Play a 1-sample silent impulse buffer to kick hardware DAC out of sleep on mobile WebKit / iOS
-    try {
-      const sampleRate = this.ctx.sampleRate || 44100;
-      const dummyBuffer = this.ctx.createBuffer(1, 1, sampleRate);
-      const dummySource = this.ctx.createBufferSource();
-      dummySource.buffer = dummyBuffer;
-      dummySource.connect(this.ctx.destination);
-      dummySource.start(0);
-    } catch (_) {}
+    // Keep mobile DAC hardware warm and awake with a permanent silent oscillator (0 gain)
+    if (!this.keepAliveNode && this.ctx.state === 'running') {
+      try {
+        const osc = this.ctx.createOscillator();
+        const silentGain = this.ctx.createGain();
+        silentGain.gain.setValueAtTime(0, this.ctx.currentTime);
+        osc.connect(silentGain);
+        silentGain.connect(this.ctx.destination);
+        osc.start();
+        this.keepAliveNode = osc;
+      } catch (_) {}
+    }
 
     this.isUnlocked = this.ctx.state === 'running';
     return this.isUnlocked;
+  }
+
+  /**
+   * Sets user manual hardware offset trim in milliseconds (persisted in localStorage)
+   */
+  setHardwareTrim(trimMs) {
+    this.userHardwareTrimMs = Math.max(-150, Math.min(150, Math.round(Number(trimMs) || 0)));
+    try {
+      localStorage.setItem('synccast_hardware_trim_ms', String(this.userHardwareTrimMs));
+    } catch (_) {}
+    return this.userHardwareTrimMs;
+  }
+
+  getHardwareTrim() {
+    return this.userHardwareTrimMs || 0;
+  }
+
+  /**
+   * Returns estimated physical DAC and buffer latency in milliseconds
+   */
+  getHardwareLatencyMs() {
+    if (!this.ctx) return 0;
+    const base = (this.ctx.baseLatency || 0) * 1000;
+    const output = (this.ctx.outputLatency || 0) * 1000;
+    return Math.round(base + output + this.userHardwareTrimMs);
   }
 
   /**
@@ -108,7 +153,7 @@ export class AudioEngine {
 
     if (onProgress) onProgress(100);
 
-    // Decode audio data safely (supporting both Promise and callback syntax for all browsers)
+    // Decode audio data safely
     this.audioBuffer = await new Promise((resolve, reject) => {
       this.ctx.decodeAudioData(
         arrayBuffer.slice(0),
@@ -122,7 +167,7 @@ export class AudioEngine {
   }
 
   /**
-   * Schedules audio to start exactly at server timestamp T through EQ and spatial router
+   * Schedules audio to start exactly at server timestamp T with hardware latency compensation
    */
   async schedulePlayback(scheduledServerTime, serverOffset, position = 0, channelMode = 'mono') {
     if (!this.ctx) {
@@ -149,26 +194,28 @@ export class AudioEngine {
 
     // 1. Convert server target T to client wallclock
     const clientWallclockTarget = scheduledServerTime - serverOffset;
-    // 2. Compute delta until start in seconds
-    let delaySeconds = (clientWallclockTarget - Date.now()) / 1000;
+    // 2. Compute delta until start in seconds using sub-millisecond precise time
+    let delaySeconds = (clientWallclockTarget - getPreciseTime()) / 1000;
 
     // Safety guard against runaway network skew, but never clamp legitimate 2.5s scheduled start
     if (delaySeconds > 10.0) {
-      console.warn(`[SyncCast] Excessive delay ${delaySeconds.toFixed(2)}s clamped to 10s`);
       delaySeconds = 10.0;
     }
 
-    let startOffset = position;
-    let scheduledContextTime;
+    // 3. Hardware Latency Compensation:
+    // Deduct physical DAC output latency, base latency, and user calibration trim
+    // so sound waves physically hit the room simultaneously across all devices
+    const hardwareLatencySeconds = (this.ctx.outputLatency || 0) + (this.ctx.baseLatency || 0) + (this.userHardwareTrimMs / 1000);
 
-    if (delaySeconds < 0) {
-      // Start time passed: advance into audio track by the elapsed delay
-      const elapsedPassed = Math.abs(delaySeconds);
+    let startOffset = position;
+    let scheduledContextTime = this.ctx.currentTime + delaySeconds - hardwareLatencySeconds;
+
+    if (scheduledContextTime <= this.ctx.currentTime + 0.02) {
+      // Start time passed or is too close (<20ms queue headroom); advance into audio track
+      const elapsedPassed = Math.max(0, (this.ctx.currentTime + 0.02) - scheduledContextTime);
       startOffset = Math.min(Math.max(0, (this.audioBuffer.duration || 100) - 0.2), position + elapsedPassed);
-      scheduledContextTime = this.ctx.currentTime;
-      console.warn(`[SyncCast] Scheduled start was ${elapsedPassed.toFixed(3)}s ago; starting from offset ${startOffset.toFixed(2)}s`);
-    } else {
-      scheduledContextTime = this.ctx.currentTime + delaySeconds;
+      scheduledContextTime = this.ctx.currentTime + 0.02; // Small 20ms safety cushion to prevent buffer underrun clicks
+      console.warn(`[SyncCast] Scheduled start was in the past; adjusted startOffset=${startOffset.toFixed(3)}s`);
     }
 
     // Never exceed audio buffer duration
@@ -176,7 +223,7 @@ export class AudioEngine {
       startOffset = Math.max(0, this.audioBuffer.duration - 0.5);
     }
 
-    console.log(`[SyncCast AudioEngine] Scheduling playback: delay=${delaySeconds.toFixed(3)}s, contextTime=${scheduledContextTime.toFixed(3)}, offset=${startOffset.toFixed(2)}s, channel=${channelMode}, ctxState=${this.ctx.state}`);
+    console.log(`[SyncCast AudioEngine] Scheduling playback: delay=${delaySeconds.toFixed(3)}s, hwLatency=${(hardwareLatencySeconds * 1000).toFixed(1)}ms, contextTime=${scheduledContextTime.toFixed(3)}, offset=${startOffset.toFixed(2)}s, channel=${channelMode}`);
 
     // 4. Create source node and reset playback rate
     this.sourceNode = this.ctx.createBufferSource();
@@ -191,6 +238,7 @@ export class AudioEngine {
     // 6. Schedule exact start
     this.scheduledContextTime = scheduledContextTime;
     this.startOffset = startOffset;
+    this.currentChannelMode = channelMode;
     this.sourceNode.start(scheduledContextTime, startOffset);
     this.isPlaying = true;
 
@@ -229,12 +277,12 @@ export class AudioEngine {
     return this.audioBuffer ? this.audioBuffer.duration : 0;
   }
 
-
   /**
-   * Micro-rate drift compensation (Phase 3.1)
-   * Nudges playback rate by ±0.15% to smoothly pull client back into lockstep
+   * Phase-Locked Loop (PLL) Audio Playhead Drift Compensator
+   * Computes true acoustic difference between this speaker and master room clock,
+   * dynamically micro-tuning playback rate (±0.1% - 0.3%) so delay is imperceptible (<1.8ms).
    */
-  compensateDrift(driftMs) {
+  compensateDrift(driftMs, expectedPosition) {
     if (!this.sourceNode || !this.isPlaying || !this.ctx) return { rate: 1.0, status: 'idle' };
 
     const now = this.ctx.currentTime;
@@ -243,25 +291,32 @@ export class AudioEngine {
 
     const absDrift = Math.abs(driftMs);
 
-    if (absDrift <= 10) {
-      // Deadband: drift within 10ms is imperceptible and within Wi-Fi jitter window; maintain exact 1.0x rate
+    if (absDrift <= 1.8) {
+      // Sub-2ms deadband: Acoustically indistinguishable to human ear in a shared room (<60cm acoustic travel)
       targetRate = 1.0;
       status = 'locked';
-    } else if (absDrift <= 30) {
-      // Ultra-gentle nudge: ±0.05% speed change (completely transparent to human ear)
-      targetRate = driftMs > 0 ? 0.9995 : 1.0005;
-      status = 'micro-nudging';
-    } else if (absDrift <= 60) {
-      // Moderate nudge: ±0.15% speed change
-      targetRate = driftMs > 0 ? 0.9985 : 1.0015;
-      status = 'recovering';
+    } else if (absDrift <= 12.0) {
+      // Micro-nudge: ±0.10% speed change (completely transparent to human hearing, imperceptible pitch change)
+      // Recovers ~1ms drift every 1.0 second of playback
+      targetRate = driftMs > 0 ? 0.9990 : 1.0010;
+      status = 'micro-sync';
+    } else if (absDrift <= 45.0) {
+      // Phase-locking: ±0.30% speed change for moderate network or crystal clock divergence
+      targetRate = driftMs > 0 ? 0.9970 : 1.0030;
+      status = 'phase-locking';
     } else {
-      // Catastrophic packet loss / clock jump (>60ms)
-      status = 'resync-needed';
+      // Catastrophic de-sync (>45ms, e.g. mobile tab backgrounding or CPU sleep)
+      // Instant seamless re-alignment to target position
+      if (typeof expectedPosition === 'number' && expectedPosition > 0) {
+        this.seekResync(expectedPosition + 0.03);
+      }
+      targetRate = 1.0;
+      status = 'resynced';
     }
 
     if (this.currentPlaybackRate !== targetRate) {
-      this.sourceNode.playbackRate.linearRampToValueAtTime(targetRate, now + 2.0);
+      // Smooth linear ramp over 0.6s to eliminate any sudden transient click or flutter
+      this.sourceNode.playbackRate.linearRampToValueAtTime(targetRate, now + 0.6);
       this.currentPlaybackRate = targetRate;
     }
 
@@ -270,6 +325,29 @@ export class AudioEngine {
       status,
       driftMs
     };
+  }
+
+  /**
+   * Seamless hard re-alignment when drift exceeds 45ms (e.g., wake from sleep)
+   */
+  seekResync(targetPosition) {
+    if (!this.audioBuffer || !this.isPlaying || !this.ctx) return;
+    try {
+      this.stop();
+      const pos = Math.min(Math.max(0, targetPosition), (this.audioBuffer.duration || 100) - 0.2);
+      this.sourceNode = this.ctx.createBufferSource();
+      this.sourceNode.buffer = this.audioBuffer;
+      this.currentPlaybackRate = 1.0;
+      this.sourceNode.connect(this.equalizer.inputNode);
+      this.channelRouter.route(this.equalizer.outputNode, this.currentChannelMode || 'mono');
+      this.startOffset = pos;
+      this.scheduledContextTime = this.ctx.currentTime;
+      this.sourceNode.start(this.ctx.currentTime, pos);
+      this.isPlaying = true;
+      console.log('[SyncCast AudioEngine] Seamless hard re-sync executed at', pos.toFixed(2), 's');
+    } catch (e) {
+      console.warn('[SyncCast AudioEngine] Hard re-sync failed:', e);
+    }
   }
 
   setEqProfile(profileName) {

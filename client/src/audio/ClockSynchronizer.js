@@ -1,19 +1,29 @@
 /**
- * Client-Side NTP Clock Synchronizer
- * Aligns client's local performance/Date clock with the Node.js server clock.
+ * High-Precision Client-Side NTP Clock Synchronizer
+ * Aligns client's local performance/Date clock with the Node.js server clock to sub-millisecond precision.
  */
+
+export function getPreciseTime() {
+  if (typeof performance !== 'undefined' && performance.timeOrigin && performance.now) {
+    return performance.timeOrigin + performance.now();
+  }
+  return Date.now();
+}
+
 export class ClockSynchronizer {
   constructor(socket) {
     this.socket = socket;
     this.offset = 0; // ms: serverTime = clientTime + offset
     this.rtt = 0; // ms
+    this.minRtt = 999;
     this.calibrated = false;
     this.samples = [];
     this.pingCount = 10;
+    this.drift = 0;
   }
 
   /**
-   * Run initial calibration round of 8-10 pings
+   * Run initial calibration round of 8-10 high-precision pings
    */
   async calibrate() {
     this.samples = [];
@@ -21,17 +31,17 @@ export class ClockSynchronizer {
     for (let i = 0; i < this.pingCount; i++) {
       await this.singlePing();
       // Brief pause between pings to avoid packet clustering
-      await new Promise((r) => setTimeout(r, 60));
+      await new Promise((r) => setTimeout(r, 40));
     }
 
     this.calculateOffset();
     this.calibrated = true;
-    return { offset: this.offset, rtt: this.rtt };
+    return { offset: this.offset, rtt: this.rtt, minRtt: this.minRtt };
   }
 
   singlePing() {
     return new Promise((resolve) => {
-      const t0 = Date.now();
+      const t0 = getPreciseTime();
       let finished = false;
 
       const cleanup = () => {
@@ -43,12 +53,16 @@ export class ClockSynchronizer {
         if (!finished && data && data.t0 === t0) {
           cleanup();
           clearTimeout(timeoutId);
-          const t2 = Date.now();
+          const t3 = getPreciseTime();
           const t1 = data.t1;
-          const rtt = Math.max(1, t2 - t0);
-          const rawOffset = t1 - (t0 + t2) / 2;
+          const t2 = data.t2 || data.t1;
 
-          this.samples.push({ t0, t1, t2, rtt, rawOffset });
+          // Subtract server execution latency (t2 - t1) from total RTT
+          const serverProc = Math.max(0, t2 - t1);
+          const rtt = Math.max(0.1, (t3 - t0) - serverProc);
+          const rawOffset = ((t1 - t0) + (t2 - t3)) / 2;
+
+          this.samples.push({ t0, t1, t2, t3, rtt, rawOffset });
           resolve();
         }
       };
@@ -70,28 +84,27 @@ export class ClockSynchronizer {
 
     // Cristian's Algorithm: Sort by lowest RTT (least queuing delay / highest symmetry)
     const sorted = [...this.samples].sort((a, b) => a.rtt - b.rtt);
-    // Take the best 2-3 lowest-RTT samples to eliminate Wi-Fi airwaves queue jitter
-    const keepCount = Math.max(1, Math.min(3, Math.floor(sorted.length * 0.3)));
+    // Take best 30-40% lowest-RTT samples to eliminate Wi-Fi airwave jitter
+    const keepCount = Math.max(2, Math.min(4, Math.floor(sorted.length * 0.4)));
     const best = sorted.slice(0, keepCount);
 
     const avgOffset = best.reduce((acc, s) => acc + s.rawOffset, 0) / best.length;
     const avgRtt = best.reduce((acc, s) => acc + s.rtt, 0) / best.length;
 
-    this.offset = Math.round(avgOffset);
-    this.rtt = Math.round(avgRtt);
-    this.minRtt = sorted[0].rtt;
+    this.offset = Math.round(avgOffset * 10) / 10;
+    this.rtt = Math.round(avgRtt * 10) / 10;
+    this.minRtt = Math.round(sorted[0].rtt * 10) / 10;
   }
 
   /**
-   * Send a quick burst of N pings and return the sample with the lowest RTT (Cristian's algorithm)
-   * This completely rejects internet packet queue jitter and finds true transmission latency.
+   * Send a quick burst of N pings and return the sample with lowest RTT (Cristian's algorithm)
    */
-  async burstPing(count = 3, gapMs = 30) {
+  async burstPing(count = 3, gapMs = 20) {
     const burstSamples = [];
 
     for (let i = 0; i < count; i++) {
       const sample = await new Promise((resolve) => {
-        const t0 = Date.now();
+        const t0 = getPreciseTime();
         let done = false;
 
         const onPong = (data) => {
@@ -99,11 +112,13 @@ export class ClockSynchronizer {
             done = true;
             clearTimeout(to);
             this.socket.off('ntp:pong', onPong);
-            const t2 = Date.now();
+            const t3 = getPreciseTime();
             const t1 = data.t1;
-            const rtt = Math.max(1, t2 - t0);
-            const rawOffset = t1 - (t0 + t2) / 2;
-            resolve({ t0, t1, t2, rtt, rawOffset });
+            const t2 = data.t2 || data.t1;
+            const serverProc = Math.max(0, t2 - t1);
+            const rtt = Math.max(0.1, (t3 - t0) - serverProc);
+            const rawOffset = ((t1 - t0) + (t2 - t3)) / 2;
+            resolve({ t0, t1, t2, t3, rtt, rawOffset });
           }
         };
 
@@ -113,7 +128,7 @@ export class ClockSynchronizer {
             this.socket.off('ntp:pong', onPong);
             resolve(null);
           }
-        }, 800);
+        }, 600);
 
         this.socket.on('ntp:pong', onPong);
         this.socket.emit('ntp:ping', { t0 });
@@ -124,16 +139,42 @@ export class ClockSynchronizer {
     }
 
     if (burstSamples.length === 0) return null;
-    // Return sample with lowest RTT (minimal queuing jitter)
     burstSamples.sort((a, b) => a.rtt - b.rtt);
     return burstSamples[0];
   }
 
   /**
-   * Starts periodic NTP background check to monitor clock health.
-   * Runs non-intrusively every 3000ms.
+   * Pre-Roll Ultra-Burst Calibration (Critical for Zero-Delay Start)
+   * Fires a 5-ping burst right during the 2.5s pre-roll window before audio starts.
+   * Locks the exact current offset immediately before scheduling.
    */
-  startDriftMonitor(intervalMs = 3000, onDriftMeasured) {
+  async preRollSync(count = 5) {
+    const burstSamples = [];
+    for (let i = 0; i < count; i++) {
+      const s = await this.burstPing(1, 10);
+      if (s) burstSamples.push(s);
+      await new Promise((r) => setTimeout(r, 15));
+    }
+
+    if (burstSamples.length > 0) {
+      burstSamples.sort((a, b) => a.rtt - b.rtt);
+      // Select lowest RTT sample
+      const best = burstSamples[0];
+      if (best.rtt < this.minRtt) this.minRtt = best.rtt;
+      
+      // Update offset towards best fresh packet
+      this.offset = Math.round((this.offset * 0.7 + best.rawOffset * 0.3) * 10) / 10;
+      this.rtt = Math.round(best.rtt * 10) / 10;
+    }
+
+    return { offset: this.offset, rtt: this.rtt, minRtt: this.minRtt };
+  }
+
+  /**
+   * Starts periodic NTP background check to maintain clock alignment continuously.
+   * Runs non-intrusively every 2000ms.
+   */
+  startDriftMonitor(intervalMs = 2000, onDriftMeasured) {
     this.stopDriftMonitor();
 
     let isBurstRunning = false;
@@ -143,22 +184,19 @@ export class ClockSynchronizer {
       isBurstRunning = true;
 
       try {
-        const bestSample = await this.burstPing(2, 25);
+        const bestSample = await this.burstPing(2, 20);
         if (bestSample) {
           const { rtt, rawOffset } = bestSample;
+          const baselineRtt = this.minRtt || this.rtt || 10;
 
-          // If RTT is within sane bounds (< 2.2x our calibrated baseline)
-          const baselineRtt = this.minRtt || this.rtt || 100;
-          if (rtt <= baselineRtt * 2.2 || this.rtt === 0) {
+          // If RTT is within sane bounds (< 2.0x baseline)
+          if (rtt <= baselineRtt * 2.0 || this.rtt === 0) {
             if (rtt < (this.minRtt || 999999)) this.minRtt = rtt;
 
-            // Compute delta between raw packet offset and current established offset
-            const rawDelta = rawOffset - this.offset;
-
-            // Keep hardware baseline stable; smooth network variance to ±3ms
-            const clampedDelta = Math.max(-4, Math.min(4, rawDelta));
-            this.drift = Math.round(((this.drift || 0) * 0.8 + clampedDelta * 0.2) * 10) / 10;
-            this.rtt = Math.round(this.rtt * 0.85 + rtt * 0.15);
+            // Continuously adapt offset via Exponential Moving Average (EMA) to prevent clock drift
+            this.offset = Math.round((this.offset * 0.88 + rawOffset * 0.12) * 10) / 10;
+            this.rtt = Math.round((this.rtt * 0.85 + rtt * 0.15) * 10) / 10;
+            this.drift = Math.round((rawOffset - this.offset) * 10) / 10;
 
             if (onDriftMeasured) {
               onDriftMeasured({
@@ -184,17 +222,14 @@ export class ClockSynchronizer {
     }
   }
 
-  /**
-   * Returns current measured clock drift in milliseconds (guaranteed <= 5ms)
-   */
   getDrift() {
-    return Math.abs(this.drift || 0) <= 5 ? (this.drift || 0) : (this.drift > 0 ? 4.8 : -4.8);
+    return this.drift || 0;
   }
 
   /**
-   * Converts local client Date.now() timestamp to estimated Server Time
+   * Converts local client timestamp to estimated Server Time
    */
-  toServerTime(localTime = Date.now()) {
+  toServerTime(localTime = getPreciseTime()) {
     return localTime + this.offset;
   }
 

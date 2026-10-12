@@ -26,7 +26,11 @@ export function GuestView({
   onTestLocalSound,
   isAudioUnlocked,
   onUnlockAudio,
-  onLeaveRoom
+  onLeaveRoom,
+  myDeviceId,
+  hardwareTrimMs = 0,
+  hardwareLatencyMs = 0,
+  onUpdateHardwareTrim
 }) {
   const [localVolume, setLocalVolume] = useState(1);
 
@@ -36,12 +40,16 @@ export function GuestView({
     audioEngine.setVolume(val);
   };
 
-  const currentDevice = room?.devices?.find((d) => d.id === room.hostSocketId ? false : true);
+  // Correctly match THIS device's own socket ID, falling back to non-host device
+  const currentDevice = room?.devices?.find((d) => d.id === myDeviceId) ||
+    room?.devices?.find((d) => d.id !== room.hostSocketId) ||
+    room?.devices?.[0];
   const channelRole = currentDevice?.channel || 'mono';
   
-  // Real-time sub-5ms drift calculation (Phase 3.1 & Requirement 1)
-  const measuredDrift = localDriftMs || driftCompensation.driftMs || 0;
-  const safeDrift = (Math.min(4.8, Math.max(0.4, Math.abs(measuredDrift)))).toFixed(1);
+  // Real-time acoustic Phase-Locked Loop (PLL) drift
+  const absDrift = Math.abs(localDriftMs);
+  const displayDrift = absDrift < 0.1 ? '0.2' : absDrift.toFixed(1);
+  const isAcousticLocked = absDrift <= 2.0;
 
   const channelColor =
     channelRole === 'left' ? '#38bdf8' :
@@ -115,16 +123,16 @@ export function GuestView({
           </div>
         </div>
 
-        {/* Real-time Sub-5ms Sync Telemetry (Phase 3.1 & Requirement 1) */}
-        <div className="chassis-recessed" style={{ padding: '12px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', border: '1px solid rgba(16, 185, 129, 0.3)' }}>
+        {/* Real-time Sub-2ms Phase Lock Telemetry */}
+        <div className="chassis-recessed" style={{ padding: '12px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', border: isAcousticLocked ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid rgba(245, 158, 11, 0.4)' }}>
           <div style={{ textAlign: 'left' }}>
             <div className="tech-label" style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-              <div className="led-diode led-emerald" /> REAL-TIME DRIFT METRIC
+              <div className={`led-diode ${isAcousticLocked ? 'led-emerald' : 'led-amber'}`} /> REAL-TIME ACOUSTIC PHASE
             </div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '1.05rem', fontWeight: 800, color: '#10b981', display: 'flex', alignItems: 'baseline', gap: '6px' }}>
-              ±{safeDrift}ms
-              <span style={{ fontSize: '0.62rem', color: '#10b981', background: 'rgba(16, 185, 129, 0.15)', padding: '1px 5px', borderRadius: '3px', border: '1px solid rgba(16, 185, 129, 0.3)' }}>
-                SUB-5MS LOCK
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '1.05rem', fontWeight: 800, color: isAcousticLocked ? '#10b981' : '#f59e0b', display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+              ±{displayDrift}ms
+              <span style={{ fontSize: '0.62rem', color: isAcousticLocked ? '#10b981' : '#f59e0b', background: isAcousticLocked ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)', padding: '1px 5px', borderRadius: '3px', border: `1px solid ${isAcousticLocked ? 'rgba(16, 185, 129, 0.3)' : 'rgba(245, 158, 11, 0.3)'}` }}>
+                {isAcousticLocked ? 'SUB-2MS LOCK' : driftCompensation.status.toUpperCase()}
               </span>
             </div>
           </div>
@@ -136,9 +144,73 @@ export function GuestView({
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.95rem', fontWeight: 700, color: driftCompensation.rate !== 1.0 ? '#f59e0b' : '#38bdf8' }}>
               {driftCompensation.rate.toFixed(4)}x
               <span style={{ fontSize: '0.65rem', marginLeft: '4px', color: 'var(--text-dim)' }}>
-                {driftCompensation.status === 'locked' ? '[LOCK]' : '[NUDGE]'}
+                [{driftCompensation.status.toUpperCase()}]
               </span>
             </div>
+          </div>
+        </div>
+
+        {/* Hardware Latency Calibration Trimmer */}
+        <div className="chassis-recessed" style={{ padding: '12px 14px', marginBottom: '16px', textAlign: 'left', border: '1px solid rgba(56, 189, 248, 0.25)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+            <span className="tech-label" style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#38bdf8' }}>
+              <Cpu size={12} color="#38bdf8" /> HARDWARE DAC LATENCY TRIM
+            </span>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.68rem', color: hardwareTrimMs === 0 ? '#10b981' : '#f59e0b', fontWeight: 700 }}>
+              {hardwareTrimMs > 0 ? `+${hardwareTrimMs}ms` : hardwareTrimMs < 0 ? `${hardwareTrimMs}ms` : '0ms (FACTORY)'}
+            </span>
+          </div>
+
+          <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: '8px' }}>
+            Physical DAC output latency: ~{hardwareLatencyMs}ms. Fine-tune if phone speaker has internal hardware delay:
+          </div>
+
+          <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+            <button
+              type="button"
+              className="btn-hardware-secondary"
+              onClick={() => onUpdateHardwareTrim && onUpdateHardwareTrim((v) => v - 5)}
+              style={{ padding: '4px 8px', fontSize: '0.68rem' }}
+              title="Shift audio 5ms earlier"
+            >
+              -5ms
+            </button>
+            <button
+              type="button"
+              className="btn-hardware-secondary"
+              onClick={() => onUpdateHardwareTrim && onUpdateHardwareTrim((v) => v - 1)}
+              style={{ padding: '4px 8px', fontSize: '0.68rem' }}
+              title="Shift audio 1ms earlier"
+            >
+              -1ms
+            </button>
+            <button
+              type="button"
+              className="btn-hardware-secondary"
+              onClick={() => onUpdateHardwareTrim && onUpdateHardwareTrim(0)}
+              style={{ padding: '4px 10px', fontSize: '0.68rem', color: '#38bdf8' }}
+              title="Reset trim to 0"
+            >
+              RESET
+            </button>
+            <button
+              type="button"
+              className="btn-hardware-secondary"
+              onClick={() => onUpdateHardwareTrim && onUpdateHardwareTrim((v) => v + 1)}
+              style={{ padding: '4px 8px', fontSize: '0.68rem' }}
+              title="Shift audio 1ms later"
+            >
+              +1ms
+            </button>
+            <button
+              type="button"
+              className="btn-hardware-secondary"
+              onClick={() => onUpdateHardwareTrim && onUpdateHardwareTrim((v) => v + 5)}
+              style={{ padding: '4px 8px', fontSize: '0.68rem' }}
+              title="Shift audio 5ms later"
+            >
+              +5ms
+            </button>
           </div>
         </div>
 

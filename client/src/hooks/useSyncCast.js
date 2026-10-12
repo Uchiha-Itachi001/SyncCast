@@ -24,6 +24,17 @@ export function useSyncCast() {
   const [testPingActive, setTestPingActive] = useState(false);
   const [hostMigrationNotice, setHostMigrationNotice] = useState(null);
   const [error, setError] = useState(null);
+  const [hardwareTrimMs, setHardwareTrimMs] = useState(audioEngine.getHardwareTrim());
+  const [hardwareLatencyMs, setHardwareLatencyMs] = useState(audioEngine.getHardwareLatencyMs());
+
+  const updateHardwareTrim = useCallback((deltaOrValue) => {
+    setHardwareTrimMs((prev) => {
+      const newVal = typeof deltaOrValue === 'function' ? deltaOrValue(prev) : deltaOrValue;
+      const setVal = audioEngine.setHardwareTrim(newVal);
+      setHardwareLatencyMs(audioEngine.getHardwareLatencyMs());
+      return setVal;
+    });
+  }, []);
 
   const clockSyncRef = useRef(null);
   const socketRef = useRef(null);
@@ -223,9 +234,16 @@ export function useSyncCast() {
       ensureTrackLoaded(track);
     });
 
-    // When host triggers playback, schedule with sample accuracy and start drift monitor (Phase 3.1)
+    // When host triggers playback, run pre-roll sync burst and schedule with sample accuracy
     socket.on('playback:start', async ({ scheduledTime, playbackPosition }) => {
       try {
+        // Run ultra-fast 5-ping Cristian pre-roll calibration in the 2.5s lead-in window
+        if (clockSyncRef.current) {
+          try {
+            await clockSyncRef.current.preRollSync(5);
+          } catch (_) {}
+        }
+
         const offset = clockSyncRef.current?.offset || 0;
         const currentRoom = roomRef.current;
         const myDevice = currentRoom?.devices?.find((d) => d.id === socket.id);
@@ -240,11 +258,8 @@ export function useSyncCast() {
           myChannel
         );
 
-        // Start continuous drift monitoring loop (stable 3000ms check with min-RTT filtering)
-        clockSyncRef.current?.startDriftMonitor(3000, ({ drift, offset: newOffset, rtt: newRtt }) => {
-          const compensation = audioEngine.compensateDrift(drift);
-          setDriftCompensation(compensation);
-          setLocalDriftMs(drift);
+        // Start continuous background clock health monitor (stable 2000ms check with min-RTT filtering)
+        clockSyncRef.current?.startDriftMonitor(2000, ({ drift, offset: newOffset, rtt: newRtt }) => {
           setSyncStats(prev => ({ ...prev, offset: newOffset, rtt: newRtt }));
 
           socket.emit('sync:report', {
@@ -303,7 +318,7 @@ export function useSyncCast() {
     };
   }, [ensureTrackLoaded, performSync]);
 
-  // Continuous playback playhead position & duration ticker (Phase 3 Media Controller)
+  // Continuous playback playhead position & Phase-Locked Loop (PLL) drift ticker
   useEffect(() => {
     const isPlaying = room?.playbackState?.status === 'playing' || room?.playbackState?.status === 'scheduled';
     if (!isPlaying) {
@@ -322,10 +337,25 @@ export function useSyncCast() {
       setPlaybackPosition(pos);
       if (dur > 0) setDuration(dur);
       else if (room?.currentTrack?.duration > 0) setDuration(room.currentTrack.duration);
-    }, 100);
+
+      // Real-Time Acoustic Phase-Locked Loop (PLL) Drift Check
+      const scheduledTime = room?.playbackState?.scheduledTime;
+      const initialPos = room?.playbackState?.playbackPosition || 0;
+      if (scheduledTime && clockSyncRef.current) {
+        const serverNow = clockSyncRef.current.toServerTime();
+        if (serverNow >= scheduledTime) {
+          const elapsedSec = (serverNow - scheduledTime) / 1000;
+          const expectedPos = initialPos + elapsedSec;
+          const trueDriftMs = Math.round((pos - expectedPos) * 1000 * 10) / 10;
+          const compensation = audioEngine.compensateDrift(trueDriftMs, expectedPos);
+          setDriftCompensation(compensation);
+          setLocalDriftMs(trueDriftMs);
+        }
+      }
+    }, 120);
 
     return () => clearInterval(timer);
-  }, [room?.playbackState?.status, room?.playbackState?.playbackPosition, room?.currentTrack]);
+  }, [room?.playbackState?.status, room?.playbackState?.playbackPosition, room?.playbackState?.scheduledTime, room?.currentTrack]);
 
   const createRoom = useCallback(async (hostName) => {
     setError(null);
@@ -539,6 +569,10 @@ export function useSyncCast() {
     advanceQueueNext,
     voteToSkip,
     performSync,
-    playLocalTestTone
+    playLocalTestTone,
+    myDeviceId: socketRef.current?.id,
+    hardwareTrimMs,
+    hardwareLatencyMs,
+    updateHardwareTrim
   };
 }

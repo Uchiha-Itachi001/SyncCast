@@ -45,7 +45,11 @@ export default function App() {
     removeTrackFromQueue,
     advanceQueueNext,
     voteToSkip,
-    playLocalTestTone
+    playLocalTestTone,
+    myDeviceId,
+    hardwareTrimMs,
+    hardwareLatencyMs,
+    updateHardwareTrim
   } = useSyncCast();
 
   // Prevent mobile device screen from sleeping during audio session
@@ -188,6 +192,10 @@ export default function App() {
             isAudioUnlocked={isAudioUnlocked}
             onUnlockAudio={unlockAudio}
             onLeaveRoom={leaveRoom}
+            myDeviceId={myDeviceId}
+            hardwareTrimMs={hardwareTrimMs}
+            hardwareLatencyMs={hardwareLatencyMs}
+            onUpdateHardwareTrim={updateHardwareTrim}
           />
         )}
       </main>
